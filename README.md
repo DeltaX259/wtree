@@ -57,15 +57,15 @@ cp <path-to-downlaoded-file> ~/.local/bin/wtree
 
 ## Features
 
-- **Clone** – Clone a git worktree/repo (use -b to specify a branch)
-- **Fetch** – Fetch updates from remote repo
-- **Add** – Add a new worktree/branch
-- **Delete** – Remove a local worktree directory
-- **Purge** – Delete branch from both worktree and repository (doesn't delete from remote source)
-- **List** – Show local branches (use -a to show all branches)
-- **Top** – Print the root directory containing your worktrees
-- **Current Worktree** – Show the active branch in the current worktree
-- **Base** – Get the branch of the base worktree (this shows the inital branch copied using `wtree clone`
-- **Status** – Colored Git status (`staged`, `unstaged`, `untracked`, etc.)
-- **Log** – Show commit history with simplified and colorful output
+- **clone** – Clone a git worktree/repo (use -b to specify a branch)
+- **fetch** – Fetch updates from remote repo
+- **add** – Add a new worktree/branch
+- **delete** – Remove a local worktree directory
+- **purge** – Delete branch from both worktree and repository (doesn't delete from remote source)
+- **list** – Show local branches (use -a to show all branches)
+- **top** – Print the root directory containing your worktrees
+- **worktree** – Show the active branch in the current worktree
+- **base** – Get the branch of the base worktree (this shows the inital branch copied using `wtree clone`
+- **status** – Colored Git status (`staged`, `unstaged`, `untracked`, etc.)
+- **log** – Show commit history with simplified and colorful output
 
