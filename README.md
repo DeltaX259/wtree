@@ -48,6 +48,12 @@ cp target/release/wtree ~/.local/bin/
 ### Download pre-compiled version(s) from releases
 https://github.com/DeltaX259/wtree/releases <br/>
 <br/>
+To be able to call wtree from any directory (bash example):
+```bash
+mkdir -p ~/.local/bin
+echo -e 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+cp <path-to-downlaoded-file> ~/.local/bin/wtree
+```
 
 ## Features
 
