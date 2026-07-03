@@ -275,6 +275,7 @@ fn delete_branch(branch: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 fn purge_branch(branch: &str) -> Result<(), Box<dyn std::error::Error>> {
     delete_branch(branch)?;
+    let branch = branch.trim_end_matches("/");
     let output = Command::new("git")
         .args(["branch", "-D", branch])
         .output()?;
