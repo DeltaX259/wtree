@@ -455,7 +455,7 @@ fn get_status() -> Result<(), Box<dyn std::error::Error>> {
     let mut other : Vec<&str> = Vec::new();
     
     for line in status.lines() {
-        if line.starts_with("A ") {
+        if line.starts_with("A ") || line.starts_with("M ") {
             staged.push(line);
         } else if line.starts_with(" M") {
             unstaged.push(line);
