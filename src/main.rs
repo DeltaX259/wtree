@@ -2,7 +2,8 @@ use clap::{Parser, Subcommand};
 use std::{
     fs,
     path::PathBuf,
-    process::{Command, ExitCode}
+    process::{Command, ExitCode},
+    collections::HashSet,
 };
 use colored::Colorize;
 
@@ -79,6 +80,14 @@ enum Commands {
     #[command(about="Move files from staged to unstaged")]
     Unstage {
         file: Option<String>,
+        all: bool,
+    },
+
+    #[command(about="Stage files to commit")]
+    Stage {
+        #[arg(help="Files to stage")]
+        files: Option<Vec<String>>,
+        #[arg(help="Stage all files")]
         #[arg(short = 'a', long = "all")]
         all: bool,
     },
@@ -161,6 +170,12 @@ fn main() -> ExitCode {
             if let Err(e) = unstage(file, all) {
                 eprintln!("[Error]: {e}");
                 return ExitCode::FAILURE;
+            }
+        }
+        Commands::Stage { files, all } => {
+            if let Err(e) = stage_files(files, all) {
+                eprintln!("[Error]: {e}");
+                return ExitCode::FAILURE
             }
         }
     }
@@ -537,6 +552,36 @@ fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error::Er
             }
         }
     }
+
+    Ok(())
+}
+
+fn stage_files(mut files: Option<Vec<String>>, all: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let staged_files_initial = get_staged_files()?;
+
+    if all {
+        let mut file = Vec::new();
+        file.push(".".to_string());
+        files = Some(file);        
+    }
+    
+    let files = match files {
+        Some(x) => x,
+        None => {
+            println!("No files passed");
+            return Ok(())
+        }
+    };
+    
+    for file in files.iter() {
+        stage_file(file)?;
+    }
+
+    let staged_files_final = get_staged_files()?;
+    let diff = list_diff(staged_files_final, staged_files_initial);
+    for value in diff.into_iter() {
+        println!("{} -> {}", value.red(), value.green());
+    }
     Ok(())
 }
 
@@ -551,6 +596,48 @@ fn unstage_file(file: String) -> Result<(), Box<dyn std::error::Error>> {
     if !status.success() {
         return Err(format!("Failed to stage file {}", file).into())
     }
+ 
     println!("{} -> {}", &file.green(), &file.red());
+ 
     Ok(())
+}
+
+fn stage_file(file: &String) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = get_current_dir();
+
+    let _ = Command::new("git")
+        .args(["add", &file])
+        .current_dir(current_dir)
+        .status()?;
+    
+    Ok(())
+}
+
+fn get_staged_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let current_dir = get_current_dir();
+    let output = Command::new("git")
+        .args(["diff", "--cached", "--name-only"])
+        .current_dir(&current_dir)
+        .output()?;
+    
+    let staged_files_list = String::from_utf8_lossy(&output.stdout).to_string();
+    let staged_files = string_to_vec(staged_files_list)?;
+    Ok(staged_files)
+}
+
+fn string_to_vec(list: String) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut result: Vec<String> = Vec::new();
+    for line in list.lines() {
+        result.push(line.trim().to_string());
+    }
+    return Ok(result)
+}
+
+fn list_diff(l1: Vec<String>, l2: Vec<String>) -> Vec<String> {
+    let list_2: HashSet<String> = l2.into_iter().collect();
+
+    l1.into_iter()
+        .filter(|s| !list_2.contains(s))
+        .clone()
+        .collect()
 }
