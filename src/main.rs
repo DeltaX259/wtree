@@ -80,6 +80,7 @@ enum Commands {
     #[command(about="Move files from staged to unstaged")]
     Unstage {
         file: Option<String>,
+        #[arg(short='a', long="all")]
         all: bool,
     },
 
@@ -530,6 +531,8 @@ fn get_status() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let staged_files_initial = get_staged_files()?;
+
     if file.is_none() && !all {
         return Err("No file specified".into());
     }
@@ -547,10 +550,16 @@ fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error::Er
 
         let status = String::from_utf8_lossy(&output.stdout).to_string();
         for line in status.lines() {
-            if line.starts_with("A ") {
+            if line.starts_with("A ") || line.starts_with("M ") {
                 unstage_file(line[3..].to_string())?;
             }
         }
+    }
+    
+    let staged_files_final = get_staged_files()?;
+    let diff = list_diff(staged_files_initial, staged_files_final);
+    for value in diff.into_iter() {
+        println!("{} -> {}", value.green(), value.red());
     }
 
     Ok(())
@@ -596,9 +605,7 @@ fn unstage_file(file: String) -> Result<(), Box<dyn std::error::Error>> {
     if !status.success() {
         return Err(format!("Failed to stage file {}", file).into())
     }
- 
-    println!("{} -> {}", &file.green(), &file.red());
- 
+  
     Ok(())
 }
 
