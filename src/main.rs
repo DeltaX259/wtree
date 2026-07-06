@@ -80,13 +80,13 @@ enum Commands {
     Amend {
         #[arg(short = 'a', long = "all")]
         all: bool,
-        #[arg(short = 'f', long = "force")]
+        #[arg(short = 'p', long = "push")]
         push: bool,
     },
 
     #[command(about="push staged changes")]
     Push {
-        #[arg(short = 'p', long = "push")]
+        #[arg(short = 'f', long = "force")]
         force: bool,
     },
     
