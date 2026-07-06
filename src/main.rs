@@ -75,6 +75,13 @@ enum Commands {
     #[command(about="Lists staged, unstaged, untracked files")]
     Status,
     
+    #[command(visible_alias = "restore")]
+    #[command(about="Move files from staged to unstaged")]
+    Unstage {
+        file: Option<String>,
+        #[arg(short = 'a', long = "all")]
+        all: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -148,6 +155,12 @@ fn main() -> ExitCode {
             if let Err(e) = get_status() {
                 eprintln!("[Error]: {e}");
                 return ExitCode::FAILURE
+            }
+        }
+        Commands::Unstage { file, all } => {
+            if let Err(e) = unstage(file, all) {
+                eprintln!("[Error]: {e}");
+                return ExitCode::FAILURE;
             }
         }
     }
@@ -498,5 +511,46 @@ fn get_status() -> Result<(), Box<dyn std::error::Error>> {
         println!("Everything is up to date");
     }
 
+    Ok(())
+}
+
+fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if file.is_none() && !all {
+        return Err("No file specified".into());
+    }
+
+    if !all {
+        let file = file.unwrap();
+        unstage_file(file)?;
+    } else {
+        let current_dir = get_current_dir();
+
+        let output = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&current_dir)
+            .output()?;
+
+        let status = String::from_utf8_lossy(&output.stdout).to_string();
+        for line in status.lines() {
+            if line.starts_with("A ") {
+                unstage_file(line[3..].to_string())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn unstage_file(file: String) -> Result<(), Box<dyn std::error::Error>> {
+    let path = get_current_dir();
+
+    let status = Command::new("git")
+        .args(["restore", "--staged", &file])
+        .current_dir(&path)
+        .status()?;
+
+    if !status.success() {
+        return Err(format!("Failed to stage file {}", file).into())
+    }
+    println!("{} -> {}", &file.green(), &file.red());
     Ok(())
 }
