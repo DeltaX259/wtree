@@ -75,6 +75,20 @@ enum Commands {
     #[command(visible_alias = "stat")]
     #[command(about="Lists staged, unstaged, untracked files")]
     Status,
+
+    #[command(about="amend your last commit")]
+    Amend {
+        #[arg(short = 'a', long = "all")]
+        all: bool,
+        #[arg(short = 'f', long = "force")]
+        push: bool,
+    },
+
+    #[command(about="push staged changes")]
+    Push {
+        #[arg(short = 'p', long = "push")]
+        force: bool,
+    },
     
     #[command(visible_alias = "restore")]
     #[command(about="Move files from staged to unstaged")]
@@ -177,6 +191,18 @@ fn main() -> ExitCode {
             if let Err(e) = stage_files(files, all) {
                 eprintln!("[Error]: {e}");
                 return ExitCode::FAILURE
+            }
+        }
+        Commands::Amend { all, push } => {
+            if let Err(e) = amend(all, push) {
+                eprintln!("[Error]: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Push { force } => {
+            if let Err(e) = git_push(force) {
+                eprintln!("[Error]: {e}");
+                return ExitCode::FAILURE;
             }
         }
     }
@@ -647,4 +673,44 @@ fn list_diff(l1: Vec<String>, l2: Vec<String>) -> Vec<String> {
         .filter(|s| !list_2.contains(s))
         .clone()
         .collect()
+}
+
+fn amend(all: bool, push: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let branch = get_current_worktree()?;
+    let path = get_top_dir()?;
+    let current_branch = format!("{}/{}", path.display(), branch).trim().to_string();
+
+    if all {
+        let _ = Command::new("git")
+            .args(["add", "."])
+            .current_dir(&current_branch)
+            .status()?;
+    }
+
+    let _ = Command::new("git")
+        .args(["commit", "--amend", "--no-edit"])
+        .current_dir(&current_branch)
+        .status()?;
+
+    if push {
+        git_push(true)?;
+    }
+    
+    Ok(())
+}
+
+fn git_push(force: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = get_current_dir();
+    let mut args = vec!("push");
+
+    if force {
+        args.push("--force-with-lease");
+    }
+
+    let _ = Command::new("git")
+        .args(&args)
+        .current_dir(current_dir)
+        .status()?;
+
+    Ok(())
 }
