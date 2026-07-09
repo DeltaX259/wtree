@@ -108,6 +108,11 @@ enum Commands {
         #[arg(short = 'a', long = "all")]
         all: bool,
     },
+    
+    #[command(about="Fille differences")]
+    Diff {
+        file: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -203,6 +208,12 @@ fn main() -> ExitCode {
         }
         Commands::Push { force } => {
             if let Err(e) = git::commit::git_push(force) {
+                eprintln!("[Error]: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Diff { file } => {
+            if let Err(e) = git::diff::diff(file) {
                 eprintln!("[Error]: {e}");
                 return ExitCode::FAILURE;
             }
