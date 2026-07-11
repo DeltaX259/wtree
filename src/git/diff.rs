@@ -2,97 +2,96 @@ use std::process::Command;
 use crate::utils::dir::get_current_dir;
 use ratatui::DefaultTerminal;
 use ratatui::layout::Constraint;
-use ratatui::macros::ratatui_core::terminal;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use crossterm::event::{self, Event, KeyEvent, KeyCode};
-use ratatui::{Frame, layout::{Alignment, Layout}, style::Stylize};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use ratatui::{Frame, layout::{Layout}};
 use color_eyre::Result;
-
-#[derive(Debug)]
-enum DiffLine {
-    Context(String),
-    Unchanged(String),
-    Added(String),
-    Removed(String),
-    Header(String),
-}
+use regex::Regex;
+use ansi_to_tui::{IntoText};
 
 pub fn diff(file: String) -> Result<(), Box< dyn std::error::Error>> {
     let current_dir = get_current_dir();
     let output = Command::new("git")
-        .args(["diff", &file])
+        .args(["diff", "-U1000000", "--word-diff", &file])
         .current_dir(current_dir)
         .output()?;
+    
     let diff_lines = String::from_utf8_lossy(&output.stdout).to_string();
-    let text = parse_diff(&diff_lines);
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for line in text.iter() {
-        match line {
-            DiffLine::Added(s) => lines.push(Line::from(Span::styled(
-                format!("+{}", s),
-                Style::default().fg(Color::Green)
-            ))),
-            DiffLine::Removed(s) => lines.push(Line::from(Span::styled(
-                format!("-{}", s),
-                Style::default().fg(Color::Red),
-            ))),
-            DiffLine::Unchanged(s) => lines.push(Line::from(
-                s.clone()
-            )),
-            _ => continue
-        };
-    }
+    let diff_lines = skip_lines(&diff_lines, 5);
+
+    let re_added = Regex::new(r"\{([+])|([+])\}").expect("Invalid regex");
+    let re_subbed = Regex::new(r"\[([-])|([-])\]").expect("Invalid regex");
+
+    let mut r1 = "\x1b[1;42m";
+    let r2 = "\x1b[0m";
+    let mut text = parse_diff(&diff_lines, re_added, r1, r2);
+    r1 = "\x1b[1;41m";
+    text = parse_diff(&text, re_subbed, r1, r2);
+    let t2 = text.into_text().unwrap();
+
+    let p = Paragraph::new(t2)        
+        .wrap(Wrap { trim: true })
+        .block(
+            Block::bordered()
+                .title("New")
+                .borders(Borders::ALL));
+
     
     color_eyre::install()?;
     ratatui::run(|terminal| {
-        let _ = app(terminal, lines);
+        let _ = app(terminal, p);
     });
 
     Ok(())
 }
 
-fn parse_diff(diff: &str) -> Vec<DiffLine> {
-    diff.lines()
-        .map(|line| {
-            if line.starts_with("@@") {
-                DiffLine::Header(line.into())
-            } else if line.starts_with('+') && !line.starts_with("+++") {
-                DiffLine::Added(line[1..].into())
-            } else if line.starts_with('-') && !line.starts_with("---") {
-                DiffLine::Removed(line[1..].into())
-            } else if line.starts_with(' ') {
-                DiffLine::Unchanged(line[1..].into())
-            } else {
-                DiffLine::Context(line.into())
-            }
-        }).collect()
+fn skip_lines(s: &str, n: usize) -> String {
+    s.lines()
+        .skip(n)
+        .collect::<Vec<&str>>()
+        .join("\n")
 }
 
+fn parse_diff(text: &str, reg: Regex, r1: &str, r2: &str) -> String {
+    let text = reg.replace_all(&text, |caps: &regex::Captures| {
+            match caps.get(2) {
+                Some(_) => r2,
+                None => r1,
+            }
+        }).to_string();
+    text
+}
 
-fn app(terminal: &mut DefaultTerminal, message: Vec<Line>) -> Result<(), Box<dyn std::error::Error>>{
+fn app(terminal: &mut DefaultTerminal, m1: Paragraph) -> Result<(), Box<dyn std::error::Error>>{
+    let mut scroll_offset: u16 = 0;
     loop {
+        let area = terminal.size()?;
+        let max_scroll = area.height.saturating_add(3);
+
         terminal.draw(|frame| {
-            render(frame, message.clone());
+            render(frame, m1.clone(), scroll_offset);
         })?;
         if let Event::Key(key) = event::read()? {
-            if key.code == KeyCode::Char('q') {
+            if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc || (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c')) {
                 break Ok(());
+            } else if key.code == KeyCode::Up {
+                scroll_offset = scroll_offset.saturating_sub(1);
+            } else if key.code == KeyCode::Down && scroll_offset <= max_scroll {
+                scroll_offset = scroll_offset.saturating_add(1);
             }
         }
     }
 }
-fn render(frame: &mut Frame, message: Vec<Line>) {
+
+fn render(frame: &mut Frame, m1: Paragraph, scroll_offset: u16) {
      let chunks = Layout::default()
          .direction(ratatui::layout::Direction::Horizontal)
          .constraints([
-             Constraint::Length(80),
+             Constraint::Percentage(50),
              Constraint::Min(0)
          ])
          .split(frame.area());
-     
-    let paragraph = Paragraph::new(message);
-    //         .scroll((scroll_offset, 0));
-    frame.render_widget(paragraph, chunks[0]);
+    let p1 = m1.scroll((scroll_offset, 0));
+    
+    frame.render_widget(p1, chunks[0]);
 }
