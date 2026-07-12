@@ -213,7 +213,7 @@ fn main() -> ExitCode {
             }
         }
         Commands::Diff { file } => {
-            if let Err(e) = git::diff::diff(file) {
+            if let Err(e) = git::diff2::diff2(file) {
                 eprintln!("[Error]: {e}");
                 return ExitCode::FAILURE;
             }
