@@ -8,19 +8,37 @@ use ratatui::{
     DefaultTerminal,
     layout::{Constraint, Rect, Layout},
     Frame,
-    style::{Modifier, Color},
-    widgets::{Block, Borders, List, ListState, Paragraph, Wrap}
+    style::{Modifier, Color, Style},
+    widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
+    text::Span,
 };
 
-struct StatefulList {
+struct StatefulList<'a> {
+    list: List<'a>,
     state: ListState,
     items: Vec<String>,
 }
-impl StatefulList {
+impl StatefulList<'_> {
     fn new(items: Vec<String>) -> Self {
+        let default_style = Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::White)
+                                .add_modifier(Modifier::BOLD);
+        
+        let title = Span::styled("Changed files", default_style);
+        let subtitle = Span::styled(" Scroll: Up/Down     View file: Enter     Quit: q/Esc ", default_style);
         Self {
+            list: List::new(items.clone())
+                .style(Color::White)
+                .highlight_style(Modifier::REVERSED)
+                .block(
+                    Block::bordered()
+                        .title(title.clone())
+                        .title_bottom(subtitle.clone())
+                        .borders(Borders::ALL)),
             state: ListState::default().with_selected(Some(0)),
-            items,
+            items: items,
+
         }
     }
     fn next(&mut self) {
@@ -56,15 +74,21 @@ struct StatefulParagraph<'a> {
     text: Paragraph<'a>,
     scroll_offset: u16,
     max_scroll: u16,
+    title: String,
+    subtitle: String,
+    default_style: Style,
 }
 impl StatefulParagraph<'_> {
     fn new(text: String) -> Self {
+        let title = String::from("");
+        let subtitle = String::from("");
         let t2 = text.into_text().unwrap();
         let p = Paragraph::new(t2)
             .wrap(Wrap { trim: true })
             .block(
                 Block::bordered()
-                    .title("Git diff")
+                    .title(Span::styled("", Style::default().add_modifier(Modifier::BOLD)))
+                    .title_bottom(Span::styled("", Style::default().add_modifier(Modifier::BOLD)))
                     .borders(Borders::ALL)
             );
         
@@ -72,6 +96,12 @@ impl StatefulParagraph<'_> {
             text: p,
             scroll_offset: 0,
             max_scroll: 0,
+            title: title,
+            subtitle: subtitle,
+            default_style: Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::White)
+                                .add_modifier(Modifier::BOLD)
         }
     }
     fn next(&mut self) {
@@ -83,16 +113,20 @@ impl StatefulParagraph<'_> {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
     }
     fn update_title(&mut self, title: String) {
+        self.title = title;
         self.text = self.text.clone().block(
             Block::bordered()
-                .title(title)
+                .title(Span::styled(self.title.clone(), self.default_style))
+                .title_bottom(Span::styled(self.subtitle.clone(), self.default_style))
                 .borders(Borders::ALL)
         )
     }
     fn update_subtitle(&mut self, subtitle: String) {
+        self.subtitle = subtitle;
         self.text = self.text.clone().block(
             Block::bordered()
-                .title_bottom(subtitle)
+                .title(Span::styled(self.title.clone(), self.default_style))
+                .title_bottom(Span::styled(self.subtitle.clone(), self.default_style))
                 .borders(Borders::ALL)
         )
     }
@@ -180,7 +214,7 @@ fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: O
     let mut p1 = StatefulParagraph::new(content);
     if f != "" {
         p1.update_title(f.to_string());
-        p1.update_subtitle("─ Scroll: Up/Down ──── Quit: q/Esc ".to_string());
+        p1.update_subtitle(" Scroll: Up/Down     Quit: q/Esc ".to_string());
     }
 
     loop {
@@ -215,7 +249,7 @@ fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: O
                             content = get_diff(selected_item.clone()).unwrap();
                             p1 = StatefulParagraph::new(content);
                             p1.update_title(selected_item);
-                            p1.update_subtitle("─ Scroll: Ctrl+Up/Down ".to_string());
+                            p1.update_subtitle(" Scroll: Ctrl+Up/Down ".to_string());
                         }
                     }
                 }
@@ -235,6 +269,7 @@ fn render(frame: &mut Frame, file_list: &mut StatefulList, p1: &mut StatefulPara
             Constraint::Min(0)
         ])
         .split(frame.area());
+    
     if file.is_none() {
         render_list(frame, file_list, chunks[0]);
         render_diff(frame, p1, chunks[1]);
@@ -243,17 +278,8 @@ fn render(frame: &mut Frame, file_list: &mut StatefulList, p1: &mut StatefulPara
     }
 }
 
-fn render_list(frame: &mut Frame, file_list: &mut StatefulList, chunk: Rect) {
-    let list = List::new(file_list.items.clone())
-        .style(Color::White)
-        .highlight_style(Modifier::REVERSED)
-        .block(
-            Block::bordered()
-                .title("Changed files")
-                .title_bottom("─ Scroll: Up/Down ──── View file: Enter ──── Quit: q/Esc ")
-                .borders(Borders::ALL));
-        
-    frame.render_stateful_widget(list, chunk, &mut file_list.state);
+fn render_list(frame: &mut Frame, file_list: &mut StatefulList, chunk: Rect) {      
+    frame.render_stateful_widget(file_list.list.clone(), chunk, &mut file_list.state);
 }
 
 fn render_diff(frame: &mut Frame, p1: &mut StatefulParagraph, chunk: Rect) {
