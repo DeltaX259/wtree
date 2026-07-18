@@ -6,3 +6,4 @@ pub mod clone;
 pub mod commit;
 pub mod diff;
 pub mod diff2;
+pub mod diff3;

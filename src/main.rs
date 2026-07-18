@@ -111,7 +111,7 @@ enum Commands {
     
     #[command(about="Fille differences")]
     Diff {
-        file: String,
+        file: Option<String>,
     },
 }
 
@@ -213,7 +213,7 @@ fn main() -> ExitCode {
             }
         }
         Commands::Diff { file } => {
-            if let Err(e) = git::diff2::diff2(file) {
+            if let Err(e) = git::diff3::diff2(file) {
                 eprintln!("[Error]: {e}");
                 return ExitCode::FAILURE;
             }

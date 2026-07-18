@@ -13,7 +13,6 @@ use color_eyre::Result;
 use regex::Regex;
 use ansi_to_tui::{IntoText};
 
-
 struct StatefulList {
     state: ListState,
     items: Vec<String>,
@@ -53,20 +52,44 @@ impl StatefulList {
     }
 }
 
+#[derive(Default)]
 struct StatefulParagraph<'a> {
-    paragraph: Paragraph<'a>,
+    text: Paragraph<'a>,
     scroll_offset: u16,
+    max_scroll: u16,
+
 }
-// impl StatefulParagraph {
-//     fn new(text: Vec<String>) -> Self {
-//         Self {
-//             paragraph: Paragraph::new(text),
-//             scroll_offset: 0,
-//         }
-//     }
-// }
+impl StatefulParagraph<'_> {
+    fn new(text: String) -> Self {
+        let t2 = text.into_text().unwrap();
+        let p = Paragraph::new(t2)
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::bordered()
+                    .title("Git diff")
+                    .borders(Borders::ALL)
+            );
+        
+        Self {
+            text: p,
+            scroll_offset: 0,
+            max_scroll: 0,
+        }
+    }
+    fn next(&mut self) {
+        if self.scroll_offset < self.max_scroll {
+            self.scroll_offset = self.scroll_offset.saturating_add(1);
+        }
+    }
+    fn previous(&mut self) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+    }
+}
 
 fn get_diff(file: String) -> Result<String, Box<dyn std::error::Error>> {
+    if file == String::from("") {
+        return Ok(String::from(""));
+    }
     let current_dir = get_current_dir();
     let output = Command::new("git")
         .args(["diff", "-U1000000", "--word-diff", &file])
@@ -75,17 +98,19 @@ fn get_diff(file: String) -> Result<String, Box<dyn std::error::Error>> {
     
     let mut diff_lines = String::from_utf8_lossy(&output.stdout).to_string();
     diff_lines = skip_lines(&diff_lines, 5);
+    
 
     let regex_added = Regex::new(r"\{([+])|([+])\}").expect("Invalid regex");
     let regex_removed = Regex::new(r"\[([-])|([-])\]").expect("Invalid regex");
 
-    let regex1 = "\x1b[1;42m";
+    let regex1 = "\x1b[1;30;42m"; //Green
     let regex2 = "\x1b[0m";
 
     diff_lines = parse_diff(&diff_lines, regex_added, regex1, regex2);
 
-    let regex1 = "\x1b[1;41m";
+    let regex1 = "\x1b[1;30;41m"; //Red
     diff_lines = parse_diff(&diff_lines, regex_removed, regex1, regex2);
+
     Ok(diff_lines)
 }
 
@@ -107,17 +132,13 @@ fn parse_diff(text: &str, reg: Regex, r1: &str, r2: &str) -> String {
 }
 
 pub fn diff2(file: Option<String>) -> Result<(), Box< dyn std::error::Error>> {
-    if file.is_none() {
-        let files = get_list();
-        let mut stateful_files = StatefulList::new(files);
-    
-        color_eyre::install()?;
-        ratatui::run(|terminal| {
-            let _ = app(terminal, &mut stateful_files);
-        });
-    } else {
-        
-    }
+    let files = get_list();
+    let mut stateful_files = StatefulList::new(files);
+
+    color_eyre::install()?;
+    ratatui::run(|terminal| {
+        let _ = app(terminal, &mut stateful_files, file);
+    });
 
     Ok(())
 }
@@ -137,40 +158,58 @@ fn get_list() -> Vec<String> {
     files
 }
 
-fn app(terminal: &mut DefaultTerminal, file_list: &mut StatefulList) -> Result<(), Box<dyn std::error::Error>>{
-    // let mut list_state = ListState::default().with_selected(Some(0));
-    let mut content = String::from("");
-    // let frame = terminal.get_frame();
-
+fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: Option<String>) -> Result<(), Box<dyn std::error::Error>>{
+    let f = match file {
+        Some(ref f) => f,
+        None => &String::from(""),
+    };
     
-    loop {
-        let mut list_state = file_list.state;
-        terminal.draw(|frame| {
-            render(frame, &file_list, &mut list_state, &content);
-        })?;
+    let mut content = get_diff(f.to_string()).unwrap();
+    let mut p1 = StatefulParagraph::new(content);
 
+    loop {
+        let area = terminal.size()?;
+        p1.max_scroll = std::cmp::max(area.height, (p1.text.line_count((area.width / 2) ) as u16) + 3);
+        p1.max_scroll -= area.height;
+            
+        terminal.draw(|frame| {
+            render(frame, &mut file_list, &mut p1, &file);
+        })?;
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
                 KeyCode::Down => {
-                    file_list.next()
+                    if key.modifiers == KeyModifiers::CONTROL || !file.is_none() {
+                        p1.next()
+                    } else {
+                        file_list.next()
+                    }
                 },
                 KeyCode::Up => {
-                    file_list.previous()
+                    if key.modifiers == KeyModifiers::CONTROL || !file.is_none() {
+                        p1.previous();
+                    } else {
+                        file_list.previous()
+                    }
                 },
                 KeyCode::Enter => {
-                    if let Some(selected_idx) = file_list.state.selected() {
-                        let selected_item = file_list.items[selected_idx].clone();
-                        content = get_diff(selected_item).unwrap();
+                    if file.is_none() {
+                        if let Some(selected_idx) = file_list.state.selected() {
+                            let selected_item = file_list.items[selected_idx].clone();
+                            content = get_diff(selected_item).unwrap();
+                            p1 = StatefulParagraph::new(content);
+                        }
                     }
                 }
+                KeyCode::Char('s') => p1.next(),
+                KeyCode::Char('w') => p1.previous(),
                 _ => {},
             }
         }
     }
 }
 
-fn render(frame: &mut Frame, file_list: &StatefulList, list_state: &mut ListState, content: &str) {
+fn render(frame: &mut Frame, file_list: &mut StatefulList, p1: &mut StatefulParagraph, file: &Option<String>) {
     let chunks = Layout::default()
         .direction(ratatui::layout::Direction::Horizontal)
         .constraints([
@@ -178,11 +217,15 @@ fn render(frame: &mut Frame, file_list: &StatefulList, list_state: &mut ListStat
             Constraint::Min(0)
         ])
         .split(frame.area());
-     render_list(frame, file_list, list_state, chunks[0]);
-     render_diff(frame, content.to_string(), chunks[1]);
+    if file.is_none() {
+        render_list(frame, file_list, chunks[0]);
+        render_diff(frame, p1, chunks[1]);
+    } else {
+        render_diff(frame, p1, chunks[0]);
+    }
 }
 
-fn render_list(frame: &mut Frame, file_list: &StatefulList, list_state: &mut ListState, chunk: Rect) {
+fn render_list(frame: &mut Frame, file_list: &mut StatefulList, chunk: Rect) {
     let list = List::new(file_list.items.clone())
         .style(Color::White)
         .highlight_style(Modifier::REVERSED)
@@ -192,16 +235,10 @@ fn render_list(frame: &mut Frame, file_list: &StatefulList, list_state: &mut Lis
                 .title("New")
                 .borders(Borders::ALL));
         
-    frame.render_stateful_widget(list, chunk, list_state);
+    frame.render_stateful_widget(list, chunk, &mut file_list.state);
 }
 
-fn render_diff(frame: &mut Frame, string_display: String, chunk: Rect) {
-    let p1 = Paragraph::new(string_display.into_text().unwrap())
-        .wrap(Wrap { trim: true })
-        .block(
-            Block::bordered()
-                .title("New")
-                .borders(Borders::ALL)
-        );
-    frame.render_widget(p1, chunk);
+fn render_diff(frame: &mut Frame, p1: &mut StatefulParagraph, chunk: Rect) {
+    p1.text = p1.text.clone().scroll((p1.scroll_offset, 0));
+    frame.render_widget(p1.text.clone(), chunk);
 }
