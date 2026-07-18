@@ -56,7 +56,6 @@ struct StatefulParagraph<'a> {
     text: Paragraph<'a>,
     scroll_offset: u16,
     max_scroll: u16,
-
 }
 impl StatefulParagraph<'_> {
     fn new(text: String) -> Self {
@@ -82,6 +81,20 @@ impl StatefulParagraph<'_> {
     }
     fn previous(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
+    }
+    fn update_title(&mut self, title: String) {
+        self.text = self.text.clone().block(
+            Block::bordered()
+                .title(title)
+                .borders(Borders::ALL)
+        )
+    }
+    fn update_subtitle(&mut self, subtitle: String) {
+        self.text = self.text.clone().block(
+            Block::bordered()
+                .title_bottom(subtitle)
+                .borders(Borders::ALL)
+        )
     }
 }
 
@@ -163,8 +176,12 @@ fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: O
         None => &String::from(""),
     };
     
-    let mut content = get_diff(f.to_string()).unwrap();
+    let mut content = get_diff(f.clone().to_string()).unwrap();
     let mut p1 = StatefulParagraph::new(content);
+    if f != "" {
+        p1.update_title(f.to_string());
+        p1.update_subtitle("─ Scroll: Up/Down ──── Quit: q/Esc ".to_string());
+    }
 
     loop {
         let area = terminal.size()?;
@@ -195,8 +212,10 @@ fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: O
                     if file.is_none() {
                         if let Some(selected_idx) = file_list.state.selected() {
                             let selected_item = file_list.items[selected_idx].clone();
-                            content = get_diff(selected_item).unwrap();
+                            content = get_diff(selected_item.clone()).unwrap();
                             p1 = StatefulParagraph::new(content);
+                            p1.update_title(selected_item);
+                            p1.update_subtitle("─ Scroll: Ctrl+Up/Down ".to_string());
                         }
                     }
                 }
@@ -228,10 +247,10 @@ fn render_list(frame: &mut Frame, file_list: &mut StatefulList, chunk: Rect) {
     let list = List::new(file_list.items.clone())
         .style(Color::White)
         .highlight_style(Modifier::REVERSED)
-        .highlight_symbol("> ")
         .block(
             Block::bordered()
-                .title("New")
+                .title("Changed files")
+                .title_bottom("─ Scroll: Up/Down ──── View file: Enter ──── Quit: q/Esc ")
                 .borders(Borders::ALL));
         
     frame.render_stateful_widget(list, chunk, &mut file_list.state);
