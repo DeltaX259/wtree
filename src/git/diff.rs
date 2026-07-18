@@ -84,7 +84,7 @@ impl StatefulParagraph<'_> {
         let subtitle = String::from("");
         let t2 = text.into_text().unwrap();
         let p = Paragraph::new(t2)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .block(
                 Block::bordered()
                     .title(Span::styled("", Style::default().add_modifier(Modifier::BOLD)))
