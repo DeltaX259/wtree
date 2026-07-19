@@ -52,7 +52,7 @@ pub fn get_current_worktree() -> Result<String, Box<dyn std::error::Error>> {
         .output()?;
 
     if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(stderr.trim().into());
