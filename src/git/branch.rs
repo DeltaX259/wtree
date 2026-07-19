@@ -1,7 +1,9 @@
 use std::process::Command;
+use std::path::PathBuf;
 use colored::Colorize;
-use crate::utils::dir::get_top_dir;
+use crate::utils::dir::{get_top_dir, get_current_dir};
 use crate::utils::worktree::get_all_worktrees;
+use crate::git::clone::fetch_repo;
 
 pub fn delete_branch(branch: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut path = get_top_dir().unwrap();
@@ -44,10 +46,22 @@ pub fn add_branch(branch: &str) -> Result<(), Box<dyn std::error::Error>> {
         .status()?;
     
         if !status.success() {
-        return Err("git worktree prune failed".into());
+        return Err("git worktree add failed".into());
     }
-
+    println!("Fetching...");
+    fetch_repo()?;
+    
+    match set_upstream(branch) {
+        Ok(()) => { 
+            println!("Set upstream");
+            let repo_dir = format!("{}/{}", path.display(), branch);
+            git_pull(PathBuf::from(repo_dir))?;
+        }
+        Err(_) => {println!("Failed to set upstream");}
+    };
+    
     println!("Added {}", &branch);
+    
     Ok(())
 }
 
@@ -81,5 +95,24 @@ pub fn branch_list(all: bool) -> Result<(), Box<dyn std::error::Error>> {
 
     }
 
+    Ok(())
+}
+
+fn set_upstream(branch: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = get_current_dir();
+    let c = format!("--set-upstream-to=origin/{branch}");
+    let _ = Command::new("git")
+            .args(["branch",  &c, branch])
+            .current_dir(current_dir)
+            .status()?;
+    Ok(())
+}
+
+fn git_pull(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Pulling: {}", &path.display());
+    let _ = Command::new("git")
+        .args(["pull", "--rebase"])
+        .current_dir(path)
+        .status()?;
     Ok(())
 }

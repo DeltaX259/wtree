@@ -70,29 +70,26 @@ pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn 
         }
     };
 
-        let status = Command::new("git")
+    let status = Command::new("git")
         .args(["worktree", "add", branch])
         .current_dir(&repo_dir)
         .status()?;
-    
-        if !status.success() {
-        return Err("git worktree prune failed".into());
-    }
 
-    println!("Repository initialized at {}", repo_dir.display());
+        if !status.success() {
+            return Err("git worktree add failed".into());
+        }
+
+    println!("Repository initialized");
 
     Ok(())
 }
+
 
 pub fn fetch_repo() -> Result<(), Box<dyn std::error::Error>> {
     let repo_path = get_current_dir();
 
     let status = Command::new("git")
-    .args([
-        "config",
-        "remote.origin.fetch",
-        "+refs/heads/*:refs/remotes/origin/*",
-    ])
+    .args(["fetch", "--all"])
     .current_dir(&repo_path)
     .status()?;
 
@@ -104,3 +101,6 @@ pub fn fetch_repo() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+
+
