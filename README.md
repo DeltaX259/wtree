@@ -57,15 +57,21 @@ cp <path-to-downlaoded-file> ~/.local/bin/wtree
 
 ## Features
 
-- **clone** – Clone a git worktree/repo (use -b to specify a branch)
-- **fetch** – Fetch updates from remote repo
-- **add** – Add a new worktree/branch
-- **delete** – Remove a local worktree directory
-- **purge** – Delete branch from both worktree and repository (doesn't delete from remote source)
-- **list** – Show local branches (use -a to show all branches)
-- **top** – Print the root directory containing your worktrees
-- **worktree** – Show the active branch in the current worktree
-- **base** – Get the branch of the base worktree (this shows the inital branch copied using `wtree clone`
-- **status** – Colored Git status (`staged`, `unstaged`, `untracked`, etc.)
-- **log** – Show commit history with simplified and colorful output
-
+Commands:
+-  **clone**     Initialise a git worktree/repo [aliases: init]
+-  **fetch**     Fetch updates from remote repo
+-  **delete**    Delete local download of worktree [aliases: remove, rm]
+-  **purge**     Remove branch from local repo and local worktree
+-  **add**       Download remote branch and add to local worktree
+-  **list**      List local/downloaded branchs
+-  **top**       Returns top worktree directory
+-  **worktree**  Returns current branch
+-  **log**       Get commit logs [aliases: logs, history]
+-  **base**      base worktree/branch
+-  **status**    Lists staged, unstaged, untracked files [aliases: stat]
+-  **amend**     amend your last commit
+-  **push**      push staged changes
+-  **unstage**   Move files from staged to unstaged [aliases: restore]
+-  **stage**     Stage files to commit
+-  **diff**      Fille differences
+-  **help**      Print this message or the help of the given subcommand(s)
