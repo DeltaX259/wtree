@@ -109,9 +109,13 @@ enum Commands {
         all: bool,
     },
     
-    #[command(about="Fille differences")]
+    #[command(about="File differences")]
     Diff {
         file: Option<String>,
+    },
+    #[command(about="stage a chunk of a file")]
+    Hunk {
+        file: Option<String>
     },
 }
 
@@ -214,6 +218,12 @@ fn main() -> ExitCode {
         }
         Commands::Diff { file } => {
             if let Err(e) = git::diff::diff(file) {
+                eprintln!("[Error]: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Hunk { file } => {
+            if let Err(e) = git::commit::hunk(file) {
                 eprintln!("[Error]: {e}");
                 return ExitCode::FAILURE;
             }
