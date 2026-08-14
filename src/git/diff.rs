@@ -262,10 +262,17 @@ fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: O
 }
 
 fn render(frame: &mut Frame, file_list: &mut StatefulList, p1: &mut StatefulParagraph, file: &Option<String>) {
+
+    let chunk_size: u16 ;
+    if file.is_none() {
+        chunk_size = 50;
+    } else {
+        chunk_size = 100;
+    }
     let chunks = Layout::default()
         .direction(ratatui::layout::Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(50),
+            Constraint::Percentage(chunk_size),
             Constraint::Min(0)
         ])
         .split(frame.area());
@@ -278,7 +285,7 @@ fn render(frame: &mut Frame, file_list: &mut StatefulList, p1: &mut StatefulPara
     }
 }
 
-fn render_list(frame: &mut Frame, file_list: &mut StatefulList, chunk: Rect) {      
+fn render_list(frame: &mut Frame, file_list: &mut StatefulList, chunk: Rect) {
     frame.render_stateful_widget(file_list.list.clone(), chunk, &mut file_list.state);
 }
 

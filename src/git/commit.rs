@@ -35,7 +35,7 @@ pub fn git_push(force: bool) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = get_current_dir();
     let branch = get_current_worktree()?;
     println!("you are {} on", &branch);
-    let c = format!("--set-upstream origin {}", branch);
+    let _ = format!("--set-upstream origin {}", branch);
 
     let mut args = vec!("push");
 
