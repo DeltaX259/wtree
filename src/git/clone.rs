@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::fs;
+use crate::git::pull::fetch_repo;
 use crate::utils::dir::get_current_dir;
 
 pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -43,18 +44,7 @@ pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn 
 
     fs::write(repo_dir.join(".git"), "gitdir: ./.bare\n")?;
 
-    let status = Command::new("git")
-        .args([
-            "config",
-            "remote.origin.fetch",
-            "+refs/heads/*:refs/remotes/origin/*",
-        ])
-        .current_dir(&repo_dir)
-        .status()?;
-
-    if !status.success() {
-        return Err("git fetch failed".into());
-    }
+    fetch_repo()?;
 
     let branch = match branch {
         Some(ref branch_name) => branch_name,
@@ -83,24 +73,3 @@ pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn 
 
     Ok(())
 }
-
-
-pub fn fetch_repo() -> Result<(), Box<dyn std::error::Error>> {
-    let repo_path = get_current_dir();
-
-    let status = Command::new("git")
-    .args(["fetch", "--all"])
-    .current_dir(&repo_path)
-    .status()?;
-
-    if !status.success() {
-        return Err("git fetch failed".into());
-    }
-
-    println!("Successfully fetched repo");
-
-    Ok(())
-}
-
-
-
