@@ -91,6 +91,9 @@ enum Commands {
         #[arg(short = 'f', long = "force")]
         force: bool,
     },
+
+    #[command(about="pull remote changes/updates")]
+    Pull,
     
     #[command(visible_alias = "restore")]
     #[command(about="Move files from staged to unstaged")]
@@ -126,7 +129,7 @@ fn main() -> ExitCode {
             }
         }
         Commands::Fetch => {
-            if let Err(e) = git::clone::fetch_repo() {
+            if let Err(e) = git::pull::fetch_repo() {
                 eprintln!("[Error]: {e}");
                 return ExitCode::FAILURE;
             }
@@ -214,6 +217,12 @@ fn main() -> ExitCode {
         }
         Commands::Diff { file } => {
             if let Err(e) = git::diff::diff(file) {
+                eprintln!("[Error]: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Commands::Pull => {
+            if let Err(e) = git::pull::pull() {
                 eprintln!("[Error]: {e}");
                 return ExitCode::FAILURE;
             }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use colored::Colorize;
 use crate::utils::dir::{get_top_dir, get_current_dir};
 use crate::utils::worktree::get_all_worktrees;
-use crate::git::clone::fetch_repo;
+use crate::git::pull::fetch_repo;
 
 pub fn delete_branch(branch: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut path = get_top_dir().unwrap();
