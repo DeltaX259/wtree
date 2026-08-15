@@ -100,6 +100,7 @@ enum Commands {
     },
 
     #[command(about="Stage files to commit")]
+    #[command(visible_alias = "add")]
     Stage {
         #[arg(help="Files to stage")]
         files: Option<Vec<String>>,
