@@ -21,12 +21,15 @@ struct StatefulList<'a> {
 impl StatefulList<'_> {
     fn new(items: Vec<String>) -> Self {
         let default_style = Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::White)
-                                .add_modifier(Modifier::BOLD);
+            .fg(Color::Black)
+            .bg(Color::White)
+            .add_modifier(Modifier::BOLD);
         
         let title = Span::styled("Changed files", default_style);
-        let subtitle = Span::styled(" Scroll: Up/Down     View file: Enter     Quit: q/Esc ", default_style);
+        let subtitle = Span::styled(
+            " Scroll: Up/Down     View file: Enter     Quit: q/Esc ",
+            default_style);
+
         Self {
             list: List::new(items.clone())
                 .style(Color::White)
@@ -43,26 +46,15 @@ impl StatefulList<'_> {
     }
     fn next(&mut self) {
         let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.items.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
+            Some(i) => (i + 1).min(self.items.len().saturating_sub(1)),
             None => 0,
         };
         self.state.select(Some(i));
     }
+    
     fn previous(&mut self) {
         let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
+            Some(i) => i.saturating_sub(1),
             None => 0,
         };
         self.state.select(Some(i));
@@ -80,8 +72,6 @@ struct StatefulParagraph<'a> {
 }
 impl StatefulParagraph<'_> {
     fn new(text: String) -> Self {
-        let title = String::from("");
-        let subtitle = String::from("");
         let t2 = text.into_text().unwrap();
         let p = Paragraph::new(t2)
             .wrap(Wrap { trim: false })
@@ -96,12 +86,12 @@ impl StatefulParagraph<'_> {
             text: p,
             scroll_offset: 0,
             max_scroll: 0,
-            title: title,
-            subtitle: subtitle,
+            title: String::new(),
+            subtitle: String::new(),
             default_style: Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::White)
-                                .add_modifier(Modifier::BOLD)
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD)
         }
     }
     fn next(&mut self) {
@@ -109,30 +99,34 @@ impl StatefulParagraph<'_> {
             self.scroll_offset = self.scroll_offset.saturating_add(1);
         }
     }
+    
     fn previous(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
     }
+    
     fn update_title(&mut self, title: String) {
         self.title = title;
-        self.text = self.text.clone().block(
-            Block::bordered()
-                .title(Span::styled(self.title.clone(), self.default_style))
-                .title_bottom(Span::styled(self.subtitle.clone(), self.default_style))
-                .borders(Borders::ALL)
-        )
+        self.update();
     }
+    
     fn update_subtitle(&mut self, subtitle: String) {
         self.subtitle = subtitle;
-        self.text = self.text.clone().block(
-            Block::bordered()
-                .title(Span::styled(self.title.clone(), self.default_style))
-                .title_bottom(Span::styled(self.subtitle.clone(), self.default_style))
-                .borders(Borders::ALL)
-        )
+        self.update();
+    }
+
+    fn update(&mut self) {
+        self.text = self.text
+            .clone()
+            .block(
+                Block::bordered()
+                    .title(Span::styled(self.title.clone(), self.default_style))
+                    .title_bottom(Span::styled(self.subtitle.clone(), self.default_style))
+                    .borders(Borders::ALL)
+            );
     }
 }
 
-fn get_diff(file: String) -> Result<String, Box<dyn std::error::Error>> {
+fn get_diff(file: &str) -> Result<String, Box<dyn std::error::Error>> {
     if file == String::from("") {
         return Ok(String::from(""));
     }
@@ -148,14 +142,10 @@ fn get_diff(file: String) -> Result<String, Box<dyn std::error::Error>> {
 
     let regex_added = Regex::new(r"\{([+])|([+])\}").expect("Invalid regex");
     let regex_removed = Regex::new(r"\[([-])|([-])\]").expect("Invalid regex");
+    let reset = "\x1b[0m";
 
-    let regex1 = "\x1b[1;30;42m"; //Green
-    let regex2 = "\x1b[0m";
-
-    diff_lines = parse_diff(&diff_lines, regex_added, regex1, regex2);
-
-    let regex1 = "\x1b[1;30;41m"; //Red
-    diff_lines = parse_diff(&diff_lines, regex_removed, regex1, regex2);
+    diff_lines = parse_diff(&diff_lines, regex_added, "\x1b[1;30;42m", reset); // Green
+    diff_lines = parse_diff(&diff_lines, regex_removed, "\x1b[1;30;41m", reset); // Red
 
     Ok(diff_lines)
 }
@@ -168,13 +158,12 @@ fn skip_lines(s: &str, n: usize) -> String {
 }
 
 fn parse_diff(text: &str, reg: Regex, r1: &str, r2: &str) -> String {
-    let text = reg.replace_all(&text, |caps: &regex::Captures| {
-            match caps.get(2) {
-                Some(_) => r2,
-                None => r1,
-            }
-        }).to_string();
-    text
+    reg.replace_all(&text, |caps: &regex::Captures| {
+        match caps.get(2) {
+            Some(_) => r2,
+            None => r1,
+        }
+    }).to_string()
 }
 
 pub fn diff(file: Option<String>) -> Result<(), Box< dyn std::error::Error>> {
@@ -194,28 +183,25 @@ fn get_list() -> Vec<String> {
     let output = Command::new("git")
         .args(["diff", "--name-only"])
         .current_dir(current_dir)
-        .output().unwrap();
+        .output()
+        .expect("Failed to run git diff --name-only");
 
-    let f = String::from_utf8_lossy(&output.stdout).to_string();
-    let mut files: Vec<String> = Vec::new();
-    for line in f.lines() {
-        files.push(line.to_string());
-    }
-    files
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: Option<String>) -> Result<(), Box<dyn std::error::Error>>{
-    let f = match file {
-        Some(ref f) => f,
-        None => &String::from(""),
+    let mut p1 = if let Some(f) = &file {
+        let content = get_diff(&f)?;
+        let mut p = StatefulParagraph::new(content);
+        p.update_title(f.clone());
+        p.update_subtitle(" Scroll: Up/Down Quit: q/Esc ".to_string());
+        p
+    } else {
+        StatefulParagraph::new(String::new())
     };
-    
-    let mut content = get_diff(f.clone().to_string()).unwrap();
-    let mut p1 = StatefulParagraph::new(content);
-    if f != "" {
-        p1.update_title(f.to_string());
-        p1.update_subtitle(" Scroll: Up/Down     Quit: q/Esc ".to_string());
-    }
 
     loop {
         let area = terminal.size()?;
@@ -225,17 +211,18 @@ fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: O
         terminal.draw(|frame| {
             render(frame, &mut file_list, &mut p1, &file);
         })?;
+        
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                KeyCode::Down => {
+                KeyCode::Down | KeyCode::Char('s') => {
                     if key.modifiers == KeyModifiers::CONTROL || !file.is_none() {
                         p1.next()
                     } else {
                         file_list.next()
                     }
                 },
-                KeyCode::Up => {
+                KeyCode::Up | KeyCode::Char('w') => {
                     if key.modifiers == KeyModifiers::CONTROL || !file.is_none() {
                         p1.previous();
                     } else {
@@ -246,15 +233,13 @@ fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: O
                     if file.is_none() {
                         if let Some(selected_idx) = file_list.state.selected() {
                             let selected_item = file_list.items[selected_idx].clone();
-                            content = get_diff(selected_item.clone()).unwrap();
+                            let content = get_diff(&selected_item)?;
                             p1 = StatefulParagraph::new(content);
                             p1.update_title(selected_item);
                             p1.update_subtitle(" Scroll: Ctrl+Up/Down ".to_string());
                         }
                     }
                 }
-                KeyCode::Char('s') => p1.next(),
-                KeyCode::Char('w') => p1.previous(),
                 _ => {},
             }
         }
