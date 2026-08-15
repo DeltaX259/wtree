@@ -43,14 +43,8 @@ enum Commands {
         branch: String,
     },
 
-    #[command(about="Download remote branch and add to local worktree")]
-    Add {
-        #[arg(help="Branch to download")]
-        branch: String,
-    },
-
     #[command(about="List local/downloaded branchs")]
-    List{
+    List {
         #[arg(short = 'a', long = "all")]
         #[arg(help="List all available worktrees")]
         all: bool,
@@ -59,9 +53,11 @@ enum Commands {
     #[command(about="Returns top worktree directory")]
     Top,
 
-    #[command(about="Returns current branch")]
-    #[command(alias = "branch")]
-    Worktree,
+    #[command(about="Returns current branch, or creates new branch if name provided")]
+    Branch {
+        #[arg(help="Branch to add/download")]
+        branch: Option<String>,
+    },
 
     #[command(about="Get commit logs")]
     #[command(visible_alias = "logs", visible_alias = "history")]
@@ -146,11 +142,25 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        Commands::Add { branch } => {
-            if let Err(e) = git::branch::add_branch(&branch) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
+        Commands::Branch { branch } => {
+            match branch {
+                Some(branch) => {
+                    if let Err(e) = git::branch::add_branch(&branch) {
+                        eprintln!("[Error]: {e}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+                None => {
+                    match get_current_worktree() {
+                        Ok(worktree) => println!("Current worktree: {}", worktree.trim()),
+                        Err(e) => {
+                            eprintln!("[Error]: {e}");
+                            return ExitCode::FAILURE;
+                        },
+                    }
+                }
             }
+ 
         }
         Commands::List { all }=> {
             if let Err(e) = git::branch::branch_list(all) {
@@ -164,15 +174,7 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        Commands::Worktree => {
-            match get_current_worktree() {
-                Ok(worktree) => println!("Current worktree: {}", worktree.trim()),
-                Err(e) => {
-                    eprintln!("[Error]: {e}");
-                    return ExitCode::FAILURE;
-                },
-            }
-        }
+
         Commands::Log { length } => {
             if let Err(e) = git::status::get_logs(length) {
                 eprintln!("[Error]: {e}");
