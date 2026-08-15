@@ -19,25 +19,30 @@ pub fn get_git_status() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut staged : Vec<&str> = Vec::new();
     let mut unstaged : Vec<&str> = Vec::new();
-    let mut untracked : Vec<&str> = Vec::new();
+    let mut staged_deleted : Vec<&str> = Vec::new();
+    let mut unstaged_deleted : Vec<&str> = Vec::new();
     let mut other : Vec<&str> = Vec::new();
     
     for line in status.lines() {
-        if line.starts_with("A ") || line.starts_with("M ") {
-            staged.push(line);
-        } else if line.starts_with(" M") {
-            unstaged.push(line);
-        } else if line.starts_with("??") {
-            untracked.push(line);
-        } else {
-            other.push(line);
+        match &line[..2] {
+            "A " | "M " => staged.push(line),
+            " M" | "??"=> unstaged.push(line),
+            " D" => unstaged_deleted.push(line),
+            "D " => staged_deleted.push(line),
+            _ => other.push(line),
         }
     }
 
     if !staged.is_empty() {
-        println!("Staged files:");
+        println!("\nStaged files:");
         for line in &staged {
             println!(" {}", line[2..].to_string().green());
+        }
+
+        if !staged_deleted.is_empty() {
+            for line in &staged_deleted {
+                println!(" {}", line[2..].to_string().red())
+            }
         }
     }
 
@@ -46,23 +51,22 @@ pub fn get_git_status() -> Result<(), Box<dyn std::error::Error>> {
         for line in &unstaged {
             println!(" {}", line[2..].to_string().yellow());
         }
-    }
 
-    if !untracked.is_empty() {
-        println!("\nUntracked files:");
-        for line in &untracked {
+        if !unstaged_deleted.is_empty() {
+            for line in &unstaged_deleted {
+                println!(" {}", line[2..].to_string().red())
+            }
+        }
+    }
+    
+    if !other.is_empty() {
+        println!("\nOther files:");
+        for line in &other {
             println!(" {}", line[2..].to_string().red());
         }
     }
 
-    if !other.is_empty() {
-        println!("\nOther files:");
-        for line in &other {
-            println!(" {}", line[2..].to_string().red().italic());
-        }
-    }
-
-    if staged.is_empty() && unstaged.is_empty() && untracked.is_empty() && other.is_empty() {
+    if staged.is_empty() && unstaged.is_empty() && unstaged_deleted.is_empty() && staged_deleted.is_empty() && other.is_empty() {
         println!("Everything is up to date");
     }
 
