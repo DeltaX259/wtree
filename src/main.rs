@@ -109,7 +109,7 @@ enum Commands {
         all: bool,
     },
     
-    #[command(about="Fille differences")]
+    #[command(about="File differences")]
     Diff {
         file: Option<String>,
     },
@@ -118,39 +118,38 @@ enum Commands {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
+    macro_rules! run {
+        ($expr:expr) => {
+            if let Err(e) = $expr {
+                eprintln!("[Error]: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+    }
     match cli.command {
-        Commands::Clone { repo, branch } => {
-            if let Err(e) = git::clone::clone_repo(&repo, branch) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Fetch => {
-            if let Err(e) = git::pull::fetch_repo() {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Delete { branch } => {
-            if let Err(e) = git::branch::delete_branch(&branch) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Purge { branch } => {
-            if let Err(e) = git::branch::purge_branch(&branch) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
+        Commands::Clone { repo, branch } => run!(git::clone::clone_repo(&repo, branch)),
+        Commands::Fetch => run!(git::pull::fetch_repo()),
+        Commands::Delete { branch } => run!(git::branch::delete_branch(&branch)),
+        
+        Commands::Purge { branch } => run!(git::branch::purge_branch(&branch)),
+        Commands::List { all }=> run!(git::branch::branch_list(all)),
+        Commands::Top => run!(worktree_top()),
+        
+        Commands::Log { length } => run!(git::status::get_logs(length)),
+        Commands::Base => run!(get_base()),
+        Commands::Status => run!(git::status::get_git_status()),
+        
+        Commands::Unstage { file, all } => run!(git::staging::unstage(file, all)),
+        Commands::Stage { files, all } => run!(git::staging::stage_files(files, all)),
+        Commands::Amend { all, push } => run!(git::commit::amend(all, push)),
+        
+        Commands::Push { force } => run!(git::commit::git_push(force)),
+        Commands::Diff { file } => run!(git::diff::diff(file)),
+        
+        Commands::Pull => run!(git::pull::pull()),
         Commands::Branch { branch } => {
             match branch {
-                Some(branch) => {
-                    if let Err(e) = git::branch::add_branch(&branch) {
-                        eprintln!("[Error]: {e}");
-                        return ExitCode::FAILURE;
-                    }
-                }
+                Some(branch) => run!(git::branch::add_branch(&branch)),
                 None => {
                     match get_current_worktree() {
                         Ok(worktree) => println!("Current worktree: {}", worktree.trim()),
@@ -163,75 +162,6 @@ fn main() -> ExitCode {
             }
  
         }
-        Commands::List { all }=> {
-            if let Err(e) = git::branch::branch_list(all) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Top => {
-            if let Err(e) = worktree_top() {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-
-        Commands::Log { length } => {
-            if let Err(e) = git::status::get_logs(length) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Base => {
-            if let Err(e) = get_base() {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Status => {
-            if let Err(e) = git::status::get_git_status() {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE
-            }
-        }
-        Commands::Unstage { file, all } => {
-            if let Err(e) = git::staging::unstage(file, all) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Stage { files, all } => {
-            if let Err(e) = git::staging::stage_files(files, all) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE
-            }
-        }
-        Commands::Amend { all, push } => {
-            if let Err(e) = git::commit::amend(all, push) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Push { force } => {
-            if let Err(e) = git::commit::git_push(force) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Diff { file } => {
-            if let Err(e) = git::diff::diff(file) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Pull => {
-            if let Err(e) = git::pull::pull() {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
     }
     ExitCode::SUCCESS
 }
-
-
