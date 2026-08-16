@@ -1,5 +1,6 @@
-use std::process::Command;
 use crate::utils::dir::get_current_dir;
+use crate::utils::git::{get_git_output};
+
 use crossterm::event::{self, Event::{self}, KeyCode, KeyModifiers};
 use color_eyre::Result;
 use regex::Regex;
@@ -131,14 +132,10 @@ fn get_diff(file: &str) -> Result<String, Box<dyn std::error::Error>> {
         return Ok(String::from(""));
     }
     let current_dir = get_current_dir();
-    let output = Command::new("git")
-        .args(["diff", "-U1000000", "--word-diff", &file])
-        .current_dir(current_dir)
-        .output()?;
-    
+    let output = get_git_output(&vec!["diff", "-U1000000", "--word-diff", &file], &current_dir)?;
+
     let mut diff_lines = String::from_utf8_lossy(&output.stdout).to_string();
     diff_lines = skip_lines(&diff_lines, 5);
-    
 
     let regex_added = Regex::new(r"\{([+])|([+])\}").expect("Invalid regex");
     let regex_removed = Regex::new(r"\[([-])|([-])\]").expect("Invalid regex");
@@ -180,11 +177,7 @@ pub fn diff(file: Option<String>) -> Result<(), Box< dyn std::error::Error>> {
 
 fn get_list() -> Vec<String> {
     let current_dir = get_current_dir();
-    let output = Command::new("git")
-        .args(["diff", "--name-only"])
-        .current_dir(current_dir)
-        .output()
-        .expect("Failed to run git diff --name-only");
+    let output = get_git_output(&vec!["diff", "--name-only"], &current_dir).expect("Failed to run git diff --name-only");
 
     String::from_utf8_lossy(&output.stdout)
         .lines()

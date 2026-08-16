@@ -1,10 +1,9 @@
-use std::process::Command;
 use colored::Colorize;
 use std::collections::HashSet;
 
-use crate::utils::dir::{
-    get_current_dir,
-};
+use crate::utils::dir::get_current_dir;
+use crate::utils::git::{get_git_status, get_git_output};
+
 
 pub fn stage_files(mut files: Option<Vec<String>>, all: bool) -> Result<(), Box<dyn std::error::Error>> {
     let staged_files_initial = get_staged_files()?;
@@ -38,11 +37,8 @@ pub fn stage_files(mut files: Option<Vec<String>>, all: bool) -> Result<(), Box<
 fn stage_file(file: &String) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = get_current_dir();
 
-    let _ = Command::new("git")
-        .args(["add", &file])
-        .current_dir(current_dir)
-        .status()?;
-    
+    let _ = get_git_status(&vec!["add", &file], &current_dir)?;
+
     Ok(())
 }
 
@@ -59,10 +55,7 @@ pub fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error
     } else {
         let current_dir = get_current_dir();
 
-        let output = Command::new("git")
-            .args(["status", "--porcelain"])
-            .current_dir(&current_dir)
-            .output()?;
+        let output = get_git_output(&vec!["status", "--porcelain"], &current_dir)?;
 
         let status = String::from_utf8_lossy(&output.stdout).to_string();
         for line in status.lines() {
@@ -82,12 +75,9 @@ pub fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error
 }
 
 fn unstage_file(file: String) -> Result<(), Box<dyn std::error::Error>> {
-    let path = get_current_dir();
+    let current_dir = get_current_dir();
 
-    let status = Command::new("git")
-        .args(["restore", "--staged", &file])
-        .current_dir(&path)
-        .status()?;
+    let status = get_git_status(&vec!["restore", "--staged", &file], &current_dir)?;
 
     if !status.success() {
         return Err(format!("Failed to stage file {}", file).into())
@@ -98,11 +88,8 @@ fn unstage_file(file: String) -> Result<(), Box<dyn std::error::Error>> {
 
 fn get_staged_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let current_dir = get_current_dir();
-    let output = Command::new("git")
-        .args(["diff", "--cached", "--name-only"])
-        .current_dir(&current_dir)
-        .output()?;
-    
+    let output = get_git_output(&vec!["diff", "--cached", "--name-only"], &current_dir)?;
+
     let staged_files_list = String::from_utf8_lossy(&output.stdout).to_string();
     let staged_files = string_to_vec(staged_files_list)?;
     Ok(staged_files)

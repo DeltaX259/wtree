@@ -1,14 +1,13 @@
-use std::process::Command;
 use std::path::PathBuf;
 use colored::Colorize;
+use crate::utils::git::{get_git_output};
 
 pub fn get_git_status() -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = get_current_dir();
 
-    let output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(&current_dir)
-        .output()?;
+
+    let args = vec!["status", "--porcelain"];
+    let output = get_git_output(&args, &current_dir)?;
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -81,10 +80,8 @@ pub fn get_logs(length: Option<String>) -> Result<(), Box<dyn std::error::Error>
     let current_dir = get_current_dir();
     let n = length.unwrap_or("10".to_string());
 
-    let output = Command::new("git")
-        .args(["log", "-n", &n, "--pretty=format:%C(red)%h - %C(green)%an, %C(blue)%ar : %C(white)%s", "--color=always"])
-        .current_dir(&current_dir)
-        .output()?;
+    let args = vec!["log", "-n", &n, "--pretty=format:%C(red)%h - %C(green)%an, %C(blue)%ar : %C(white)%s", "--color=always"];
+    let output = get_git_output(&args, &current_dir)?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
