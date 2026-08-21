@@ -1,30 +1,24 @@
-use std::process::Command;
+use std::path::PathBuf;
 use crate::utils::dir::{
     get_current_dir,
     get_top_dir,
 };
 use crate::utils::worktree::get_current_worktree;
+use crate::utils::git::{get_git_status, get_git_output};
 
 
 pub fn amend(all: bool, push: bool) -> Result<(), Box<dyn std::error::Error>> {
     let branch = get_current_worktree()?;
     let path = get_top_dir()?;
-    let current_branch = format!("{}/{}", path.display(), branch).trim().to_string();
+    let current_branch = PathBuf::from(format!("{}/{}", path.display(), branch).trim().to_string());
 
     if all {
-        let _ = Command::new("git")
-            .args(["add", "."])
-            .current_dir(&current_branch)
-            .status()?;
+        let _ = get_git_status(&vec!["add", "."], &current_branch)?;
     }
 
-    let _ = Command::new("git")
-        .args(["commit", "--amend", "--no-edit"])
-        .current_dir(&current_branch)
-        .status()?;
+    let _ = get_git_status(&vec!["commit", "--amend", "--no-edit"], &current_branch)?;
 
     if push {
-        // set_remote_origin()?;
         git_push(true)?;
     }
     
@@ -51,10 +45,7 @@ pub fn git_push(force: bool) -> Result<(), Box<dyn std::error::Error>> {
         args.push("--force-with-lease");
     }
 
-    let _ = Command::new("git")
-        .args(&args)
-        .current_dir(current_dir)
-        .status()?;
+    let _ = get_git_status(&args, &current_dir)?;
 
     println!("Push successful");
 
@@ -63,10 +54,7 @@ pub fn git_push(force: bool) -> Result<(), Box<dyn std::error::Error>> {
 
 fn check_upstream() -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = get_current_dir();
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-        .current_dir(current_dir)
-        .output()?;
+    let output = get_git_output(&vec!["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], &current_dir)?;
 
     if output.status.success() {
         return Ok(())

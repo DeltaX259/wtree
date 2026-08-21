@@ -1,13 +1,10 @@
-use std::process::Command;
 use crate::utils::dir::get_current_dir;
+use crate::utils::git::{get_git_status};
 
 pub fn fetch_repo() -> Result<(), Box<dyn std::error::Error>> {
-    let repo_path = get_current_dir();
+    let current_dir = get_current_dir();
 
-    let status = Command::new("git")
-    .args(["fetch", "--all"])
-    .current_dir(&repo_path)
-    .status()?;
+    let status = get_git_status(&vec!["fetch", "--all"], &current_dir)?;
 
     if !status.success() {
         return Err("git fetch failed".into());
@@ -23,10 +20,7 @@ pub fn pull() -> Result<(), Box<dyn std::error::Error>> {
     fetch_repo()?;
 
     let current_dir = get_current_dir();
-    let status = Command::new("git")
-        .args(["pull", "--rebase"])
-        .current_dir(current_dir)
-        .status()?;
+    let status = get_git_status(&vec!["pull", "--rebase"], &current_dir)?;
 
     if !status.success() {
         return Err("git pull failed".into())
