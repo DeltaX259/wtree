@@ -108,7 +108,10 @@ enum Commands {
         #[arg(short = 'a', long = "all")]
         all: bool,
     },
-    
+
+    #[command(about="Commit staged changes")]
+    Commit,
+
     #[command(about="File differences")]
     Diff {
         file: Option<String>,
@@ -142,7 +145,8 @@ fn main() -> ExitCode {
         Commands::Unstage { file, all } => run!(git::staging::unstage(file, all)),
         Commands::Stage { files, all } => run!(git::staging::stage_files(files, all)),
         Commands::Amend { all, push } => run!(git::commit::amend(all, push)),
-        
+
+        Commands::Commit => run!(git::commit::make_commit()),
         Commands::Push { force } => run!(git::commit::git_push(force)),
         Commands::Diff { file } => run!(git::diff::diff(file)),
         
