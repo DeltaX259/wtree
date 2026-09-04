@@ -92,8 +92,9 @@ pub fn make_commit() -> Result<(), Box<dyn std::error::Error>> {
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Percentage(90)].as_ref());
+        .constraints([Constraint::Min(3), Constraint::Percentage(90), Constraint::Min(1)].as_ref());
 
+    let footer = ratatui::text::Line::from("Tab = Switch textbox | Ctrl+x = Finish commit | Esc = Quit").centered().style(Style::new().blue());
     let mut which = 0;
 
     loop {
@@ -102,6 +103,7 @@ pub fn make_commit() -> Result<(), Box<dyn std::error::Error>> {
             for (textarea, chunk) in textarea.iter().zip(chunks.iter()) {
                 f.render_widget(&textarea.textarea, *chunk);
             }
+            f.render_widget(&footer, chunks[2]);
         })?;
         match crossterm::event::read()?.into() {
             Input { key: Key::Esc, .. } => {
@@ -124,8 +126,6 @@ pub fn make_commit() -> Result<(), Box<dyn std::error::Error>> {
 
     exit(&mut term)?;
     git_commit(textarea)?;
-    // println!("Left textarea: {:?}", textarea[0].textarea.lines());
-    // println!("Right textarea: {:?}", textarea[1].textarea.lines());
     Ok(())
 }
 
@@ -211,11 +211,15 @@ fn exit(term: &mut Terminal<CrosstermBackend<std::io::StdoutLock<'_>>>) -> io::R
 
 fn git_commit(textarea: Vec<TextBox>) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = get_current_dir();
-    Command::new("git")
-    .args(["commit", "-m", textarea[0].textarea.lines().join("\n").as_str(), "-m", textarea[1].textarea.lines().join("\n").as_str(), "-q"])
-    .current_dir(current_dir)
-    .status()?;
-
-    println!("Commit successful");
+    let status = Command::new("git")
+        .args(["commit", "-m", textarea[0].textarea.lines().join("\n").as_str(), "-m", textarea[1].textarea.lines().join("\n").as_str(), "-q"])
+        .current_dir(current_dir)
+        .status()?;
+    if status.success() {
+        println!("Commit successful");
+    } else {
+        println!("Commit failed");
+    }
+    
     Ok(())
 }
