@@ -41,23 +41,14 @@ pub fn purge_branch(branch: &str) -> Result<(), Box<dyn std::error::Error>> {
 pub fn add_branch(branch: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = get_top_dir()?;
 
-    let status = get_git_status(&vec!["worktree", "add", branch], &path)?;
+    let status = get_git_status(&vec!["worktree", "add", &branch], &path)?;
 
     if !status.success() {
         return Err("git worktree add failed".into());
     }
-    println!("Fetching...");
-    fetch_repo()?;
-
-    match set_upstream(branch) {
-        Ok(()) => { 
-            println!("Set upstream");
-            let repo_dir = format!("{}/{}", path.display(), branch);
-            git_pull(PathBuf::from(repo_dir))?;
-        }
-        Err(_) => {println!("Failed to set upstream");}
-    };
     
+    let path = format!("{}/{}", path.display(), &branch);
+    let _ = crate::git::pull::check_upstream(path, &branch);
     println!("Added {}", &branch);
     
     Ok(())

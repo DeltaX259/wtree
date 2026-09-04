@@ -47,11 +47,12 @@ pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn 
         }
     };
 
-    let status = get_git_status(&vec!["worktree", "add", branch], &repo_dir)?;
+    let status = get_git_status(&vec!["worktree", "add", &branch], &repo_dir)?;
 
     if !status.success() {
         return Err("git worktree add failed".into());
     }
+    // crate::git::pull::check_upstream(&branch)?;
 
     println!("Repository initialized");
 

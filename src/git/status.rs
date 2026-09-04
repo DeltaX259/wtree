@@ -93,3 +93,5 @@ pub fn get_logs(length: Option<String>) -> Result<(), Box<dyn std::error::Error>
 
     Ok(())
 }
+
+

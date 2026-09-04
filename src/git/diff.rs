@@ -63,7 +63,7 @@ impl StatefulList<'_> {
 }
 
 #[derive(Default)]
-struct StatefulParagraph<'a> {
+pub struct StatefulParagraph<'a> {
     text: Paragraph<'a>,
     scroll_offset: u16,
     max_scroll: u16,
