@@ -143,7 +143,13 @@ fn main() -> ExitCode {
         Commands::Status => run!(git::status::get_git_status()),
         
         Commands::Unstage { file, all } => run!(git::staging::unstage(file, all)),
-        Commands::Stage { files, all } => run!(git::staging::stage_files(files, all)),
+        Commands::Stage { files, all } => {
+            if files.is_none() && !all {
+                run!(git::staging::stage_selector())
+            } else {
+                run!(git::staging::stage_files(files, all))
+            }
+        },
         Commands::Amend { all, push } => run!(git::commit::amend(all, push)),
 
         Commands::Commit => run!(git::commit::make_commit()),
