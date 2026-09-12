@@ -136,26 +136,26 @@ struct StatefulCheckBox<'a> {
     selected: ListState,
 }
 impl StatefulCheckBox<'_> {
-    fn new() -> Self {
-        let (files, added, states) = Self::get_file_states();
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let (files, added, states) = Self::get_file_states()?;
         let list = Self::generateList(files.clone(), added.clone(), states.clone());
-        Self {
+        Ok(Self {
             files: files,
             states: states,
             added: added.clone(),
             original_states: added,
             list: list, 
             selected: ListState::default().with_selected(Some(0)),
-        }
+        })
     }
-    fn get_file_states() -> (Vec<String>, Vec<bool>, Vec<State>) {
+    fn get_file_states() -> Result<(Vec<String>, Vec<bool>, Vec<State>), Box<dyn std::error::Error>> {
         let current_dir = get_current_dir();
         let args = vec!["status", "--porcelain"];
-        let output = get_git_output(&args, &current_dir).unwrap();
+        let output = get_git_output(&args, &current_dir)?;
         
         if !output.status.success() {
             let _stderr = String::from_utf8_lossy(&output.stderr);
-            return (Vec::new(), Vec::new(), Vec::new());
+            return Ok((Vec::new(), Vec::new(), Vec::new()));
         }
     
         let output = String::from_utf8_lossy(&output.stdout).to_string();
@@ -215,7 +215,7 @@ impl StatefulCheckBox<'_> {
                 },
             };
         }
-        return (files, added, states)
+        return Ok((files, added, states))
     }
     #[allow(nonstandard_style)]
     fn generateList(files: Vec<String>, added: Vec<bool>, states: Vec<State>) -> List<'static> {
@@ -323,14 +323,14 @@ impl StatefulCheckBox<'_> {
 /////////////////////////////////////////////////////////////////////////////////////////////////
 ///// Rendering
 /////////////////////////////////////////////////////////////////////////////////////////////////
-pub fn stage_selector() -> Result<()> {
-    let mut checkbox_list = StatefulCheckBox::new();
+pub fn stage_selector() -> Result<(), Box<dyn std::error::Error>> {
+    let mut checkbox_list = StatefulCheckBox::new()?;
 
     color_eyre::install()?;
     let terminal = ratatui::init();
     let result = run(terminal, &mut checkbox_list);
     ratatui::restore();
-    if result.unwrap() == true {
+    if result.unwrap_or(false) == true {
         get_file_changes(checkbox_list.files, checkbox_list.original_states, checkbox_list.added);
     }
     Ok(())

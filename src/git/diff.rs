@@ -72,8 +72,8 @@ struct StatefulParagraph<'a> {
     default_style: Style,
 }
 impl StatefulParagraph<'_> {
-    fn new(text: String) -> Self {
-        let t2 = text.into_text().unwrap();
+    fn new(text: String) -> Result<Self, Box<dyn std::error::Error>> {
+        let t2 = text.into_text()?;
         let p = Paragraph::new(t2)
             .wrap(Wrap { trim: false })
             .block(
@@ -83,7 +83,7 @@ impl StatefulParagraph<'_> {
                     .borders(Borders::ALL)
             );
         
-        Self {
+        Ok(Self {
             text: p,
             scroll_offset: 0,
             max_scroll: 0,
@@ -93,7 +93,7 @@ impl StatefulParagraph<'_> {
                 .fg(Color::Black)
                 .bg(Color::White)
                 .add_modifier(Modifier::BOLD)
-        }
+        })
     }
     fn next(&mut self) {
         if self.scroll_offset < self.max_scroll {
@@ -188,12 +188,12 @@ fn get_list() -> Vec<String> {
 fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: Option<String>) -> Result<(), Box<dyn std::error::Error>>{
     let mut p1 = if let Some(f) = &file {
         let content = get_diff(&f)?;
-        let mut p = StatefulParagraph::new(content);
+        let mut p = StatefulParagraph::new(content)?;
         p.update_title(f.clone());
         p.update_subtitle(" Scroll: Up/Down Quit: q/Esc ".to_string());
         p
     } else {
-        StatefulParagraph::new(String::new())
+        StatefulParagraph::new(String::new())?
     };
 
     loop {
@@ -227,7 +227,7 @@ fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: O
                         if let Some(selected_idx) = file_list.state.selected() {
                             let selected_item = file_list.items[selected_idx].clone();
                             let content = get_diff(&selected_item)?;
-                            p1 = StatefulParagraph::new(content);
+                            p1 = StatefulParagraph::new(content)?;
                             p1.update_title(selected_item);
                             p1.update_subtitle(" Scroll: Ctrl+Up/Down ".to_string());
                         }
