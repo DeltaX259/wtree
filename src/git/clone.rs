@@ -34,8 +34,6 @@ pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn 
 
     fs::write(repo_dir.join(".git"), "gitdir: ./.bare\n")?;
 
-    fetch_repo()?;
-
     let branch = match branch {
         Some(ref branch_name) => branch_name,
         None => {
@@ -47,7 +45,7 @@ pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn 
         }
     };
 
-    let status = get_git_status(&vec!["worktree", "add", branch], &repo_dir)?;
+    let status = get_git_status(&vec!["worktree", "add", branch, "-q"], &repo_dir)?;
 
     if !status.success() {
         return Err("git worktree add failed".into());
