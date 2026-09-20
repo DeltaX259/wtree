@@ -1,7 +1,8 @@
 use colored::Colorize;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
-use crate::utils::dir::get_current_dir;
+use crate::utils::dir::{get_current_dir, get_top_git};
 use crate::utils::git::{get_git_status, get_git_output};
 
 use color_eyre::Result;
@@ -27,9 +28,9 @@ pub fn stage_files(mut files: Option<Vec<String>>, all: bool) -> Result<(), Box<
             return Ok(())
         }
     };
-    
+    let current_dir = get_current_dir();
     for file in files.iter() {
-        stage_file(file)?;
+        stage_file(file, &current_dir)?;
     }
 
     let staged_files_final = get_staged_files()?;
@@ -40,10 +41,12 @@ pub fn stage_files(mut files: Option<Vec<String>>, all: bool) -> Result<(), Box<
     Ok(())
 }
 
-fn stage_file(file: &String) -> Result<(), Box<dyn std::error::Error>> {
-    let current_dir = get_current_dir();
+fn stage_file(file: &String, location: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let status = get_git_status(&vec!["add", &file], location)?;
 
-    let _ = get_git_status(&vec!["add", &file], &current_dir)?;
+    if !status.success() {
+        return Err(format!("Failed to unstage file {}", file).into())
+    }
 
     Ok(())
 }
@@ -55,18 +58,19 @@ pub fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error
         return Err("No file specified".into());
     }
 
+    let current_dir = get_current_dir();
+
     if !all {
         let file = file.unwrap();
-        unstage_file(file)?;
+        unstage_file(file, &current_dir)?;
     } else {
-        let current_dir = get_current_dir();
 
         let output = get_git_output(&vec!["status", "--porcelain"], &current_dir)?;
 
         let status = String::from_utf8_lossy(&output.stdout).to_string();
         for line in status.lines() {
             if line.starts_with("A ") || line.starts_with("M ") {
-                unstage_file(line[3..].to_string())?;
+                unstage_file(line[3..].to_string(), &current_dir)?;
             }
         }
     }
@@ -80,13 +84,11 @@ pub fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-fn unstage_file(file: String) -> Result<(), Box<dyn std::error::Error>> {
-    let current_dir = get_current_dir();
-
-    let status = get_git_status(&vec!["restore", "--staged", &file], &current_dir)?;
+fn unstage_file(file: String, location: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let status = get_git_status(&vec!["restore", "--staged", &file], location)?;
 
     if !status.success() {
-        return Err(format!("Failed to stage file {}", file).into())
+        return Err(format!("Failed to unstage file {}", file).into())
     }
   
     Ok(())
@@ -331,7 +333,7 @@ pub fn stage_selector() -> Result<(), Box<dyn std::error::Error>> {
     let result = run(terminal, &mut checkbox_list);
     ratatui::restore();
     if result.unwrap_or(false) == true {
-        get_file_changes(checkbox_list.files, checkbox_list.original_states, checkbox_list.added);
+        get_file_changes(checkbox_list.files, checkbox_list.original_states, checkbox_list.added)?;
     }
     Ok(())
 }
@@ -406,18 +408,21 @@ fn render_checkboxes(frame: &mut Frame, area: Rect, checkbox_list: &mut Stateful
 ///// Git Operations
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-fn get_file_changes(files: Vec<String>, old_states: Vec<bool>, new_states: Vec<bool>) {
+fn get_file_changes(files: Vec<String>, old_states: Vec<bool>, new_states: Vec<bool>) -> Result<(), Box<dyn std::error::Error>> {
+    let top_dir = get_top_git()?;
+
     for ((old_state, new_state), filename) in old_states.iter().zip(&new_states).zip(&files) {
         if *old_state == false && *new_state == true {
-            match stage_file(&filename) {
+            match stage_file(&filename, &top_dir) {
                 Ok(_) => println!("{} -> {}", filename.red(), filename.green()),
-                Err(_) => println!("Failed to stage {}", filename)
+                Err(e) => println!("Failed to stage {} {filename}: {e}", top_dir.display())
             }
         } else if *old_state == true && *new_state == false {
-            match unstage_file(filename.clone()) {
+            match unstage_file(filename.clone(), &top_dir) {
                 Ok(_) => println!("{} -> {}", filename.green(), filename.red()),
-                Err(_) => println!("Failed to stage {}", filename)
+                Err(e) => println!("Failed to unstage {filename}: {e}")
             }
         }
-    } 
+    }
+    Ok(())
 }
