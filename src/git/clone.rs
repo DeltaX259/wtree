@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use std::fs;
-use crate::git::pull::fetch_repo;
 use crate::utils::dir::get_current_dir;
 use crate::utils::git::{get_git_status, get_git_output};
 
