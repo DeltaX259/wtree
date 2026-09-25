@@ -333,12 +333,12 @@ struct App<'a> {
     checkbox_list:  StatefulCheckBox<'a>,
 }
 impl<'a> App<'_> {
-    fn new() -> Self {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let _ = color_eyre::install();
         let terminal = ratatui::init();
-        let checkbox_list = StatefulCheckBox::new().unwrap();
+        let checkbox_list = StatefulCheckBox::new()?;
 
-        Self { terminal, checkbox_list }
+        Ok(Self { terminal, checkbox_list })
     }
     fn run(&mut self) -> Result<bool> {
         let save: bool;
@@ -423,19 +423,20 @@ impl<'a> App<'_> {
     fn render_checkboxes(frame: &mut Frame, area: Rect, checkbox_list: &mut StatefulCheckBox) {
         frame.render_stateful_widget(checkbox_list.list.clone(), area, &mut checkbox_list.selected);
     }
-    fn exit(&mut self, result: Result<bool>) {
+    fn exit(&mut self, result: Result<bool>) -> Result<(), Box<dyn std::error::Error>> {
         ratatui::restore();
 
         if result.unwrap_or(false) == true {
-            get_file_changes(&self.checkbox_list).unwrap();
+            get_file_changes(&self.checkbox_list)?;
         }
+        Ok(())
     }
 }
 
 pub fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    let mut app = App::new();
+    let mut app = App::new()?;
     let result = app.run();
-    app.exit(result);
+    app.exit(result)?;
     Ok(())
 }
 
