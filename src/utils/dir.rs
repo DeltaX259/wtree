@@ -24,7 +24,7 @@ fn dir_finder(dir: &PathBuf, extention: &str) -> Option<PathBuf> {
 
     loop {
         let bare = dir.join(extention);
-        if bare.exists() && fs::metadata(&bare).map(|m| m.is_dir()).unwrap_or(false) {
+        if bare.exists() {
             return Some(PathBuf::from(dir))
         }
 
