@@ -4,11 +4,13 @@ use std::path::PathBuf;
 
 use crate::utils::dir::{get_current_dir, get_top_git};
 use crate::utils::git::{get_git_status, get_git_output};
-
+use ratatui::Terminal;
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use ratatui::prelude::CrosstermBackend;
+use std::io::Stdout;
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    border, DefaultTerminal, Frame, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, List, ListItem, ListState, Padding, Paragraph},
+    border, Frame, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, List, ListItem, ListState, Padding, Paragraph},
 };
 
 
@@ -129,6 +131,7 @@ enum State {
     Renamed,
     Error,
 }
+#[derive(Clone)]
 struct StatefulCheckBox<'a> {
     files: Vec<String>,
     states: Vec<State>,
@@ -325,93 +328,124 @@ impl StatefulCheckBox<'_> {
 /////////////////////////////////////////////////////////////////////////////////////////////////
 ///// Rendering
 /////////////////////////////////////////////////////////////////////////////////////////////////
-pub fn stage_selector() -> Result<(), Box<dyn std::error::Error>> {
-    let mut checkbox_list = StatefulCheckBox::new()?;
+struct App<'a> {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+    checkbox_list:  StatefulCheckBox<'a>,
+}
+impl<'a> App<'_> {
+    fn new() -> Self {
+        let _ = color_eyre::install();
+        let terminal = ratatui::init();
+        let checkbox_list = StatefulCheckBox::new().unwrap();
 
-    color_eyre::install()?;
-    let terminal = ratatui::init();
-    let result = run(terminal, &mut checkbox_list);
-    ratatui::restore();
-    if result.unwrap_or(false) == true {
-        get_file_changes(checkbox_list.files, checkbox_list.original_states, checkbox_list.added)?;
+        Self { terminal, checkbox_list }
     }
+    fn run(&mut self) -> Result<bool> {
+        let save: bool;
+
+        loop {
+            let terminal = &mut self.terminal;
+            let checkbox_list = &mut self.checkbox_list;
+            terminal.draw(|frame| Self::render(frame, checkbox_list))?;
+            if let Event::Key(key) = event::read()? {
+                match self.button_pressed(key) {
+                    Some(state) => {
+                        save = state;
+                        break
+                    },
+                    None => {},
+                }
+            }
+        }
+        Ok(save)
+    }
+    fn button_pressed(&mut self, key: KeyEvent) -> Option<bool>{
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return Some(false),
+            KeyCode::Up => {
+                self.checkbox_list.previous();
+                return None
+            },
+            KeyCode::Down => {
+                self.checkbox_list.next();
+                return None
+            },
+            KeyCode::Enter => {
+                self.checkbox_list.update();
+                return None
+            },
+            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Some(true)
+            },
+            _ => return None
+        }
+    }
+    fn render(frame: &mut Frame, checkbox_list: &mut StatefulCheckBox<'a>) {
+        let layout = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Min(3),
+            Constraint::Length(3)
+        ]).split(frame.area());
+
+        Self::render_header(frame, layout[0]);
+        Self::render_checkboxes(frame, layout[1], checkbox_list);
+        Self::render_footer(frame, layout[2]);
+    }
+    fn render_header(frame: &mut Frame, area: Rect) {
+        let text = Paragraph::new("Staged   State   File Path")
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .block(
+                Block::default()
+                    .borders(border!(TOP, LEFT, RIGHT))
+            );
+        frame.render_widget(text, area);
+    }
+    fn render_footer(frame: &mut Frame, area: Rect) {
+        let block = Block::bordered()
+            .border_style(Style::default().fg(Color::DarkGray))
+            .padding(Padding::horizontal(1));
+
+        let text = Line::from(vec![
+                Span::styled("↑/↓", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(" Navigate  "),
+                Span::styled("Enter", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(" Toggle  "),
+                Span::styled("Ctrl+x", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(" Apply Changes  "),
+                Span::styled("Esc/q", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(" Quit"),
+            ]);
+
+        let paragraph = Paragraph::new(text).alignment(Alignment::Center);
+        frame.render_widget(paragraph.block(block), area);
+    }
+
+    fn render_checkboxes(frame: &mut Frame, area: Rect, checkbox_list: &mut StatefulCheckBox) {
+        frame.render_stateful_widget(checkbox_list.list.clone(), area, &mut checkbox_list.selected);
+    }
+    fn exit(&mut self, result: Result<bool>) {
+        ratatui::restore();
+
+        if result.unwrap_or(false) == true {
+            get_file_changes(&self.checkbox_list).unwrap();
+        }
+    }
+}
+
+pub fn run_app() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = App::new();
+    let result = app.run();
+    app.exit(result);
     Ok(())
 }
 
-fn run(mut terminal: DefaultTerminal, checkbox_list: &mut StatefulCheckBox) -> Result<bool> {
-    loop {
-        terminal.draw(|frame| render(frame, checkbox_list))?;
-
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(false),
-                KeyCode::Up => checkbox_list.previous(),
-                KeyCode::Down => checkbox_list.next(),
-                KeyCode::Enter => checkbox_list.update(),
-                KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                _ => {}
-            }
-        }
-    }
-    Ok(true)
-}
-
-fn render(frame: &mut Frame, checkbox_list: &mut StatefulCheckBox) {
-    render_interactive(frame, checkbox_list);
-}
-
-fn render_interactive(frame: &mut Frame, checkbox_list: &mut StatefulCheckBox) {
-    let layout = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(3),
-        Constraint::Length(3)
-    ]).split(frame.area());
-
-    render_header(frame, layout[0]);
-    render_checkboxes(frame, layout[1], checkbox_list);
-    render_footer(frame, layout[2]);
-}
-fn render_header(frame: &mut Frame, area: Rect) {
-    let text = Paragraph::new("Staged   State   File Path")
-        .style(Style::default().add_modifier(Modifier::BOLD))
-        .block(
-            Block::default()
-                .borders(border!(TOP, LEFT, RIGHT))
-        );
-    frame.render_widget(text, area);
-}
-
-fn render_footer(frame: &mut Frame, area: Rect) {
-    let block = Block::bordered()
-        .border_style(Style::default().fg(Color::DarkGray))
-        .padding(Padding::horizontal(1));
-
-    let text = Line::from(vec![
-            Span::styled("↑/↓", Style::default().fg(Color::Cyan).bold()),
-            Span::raw(" Navigate  "),
-            Span::styled("Enter", Style::default().fg(Color::Cyan).bold()),
-            Span::raw(" Toggle  "),
-            Span::styled("Ctrl+x", Style::default().fg(Color::Cyan).bold()),
-            Span::raw(" Apply Changes  "),
-            Span::styled("Esc/q", Style::default().fg(Color::Cyan).bold()),
-            Span::raw(" Quit"),
-        ]);
-
-    let paragraph = Paragraph::new(text).alignment(Alignment::Center);
-    frame.render_widget(paragraph.block(block), area);
-}
-
-fn render_checkboxes(frame: &mut Frame, area: Rect, checkbox_list: &mut StatefulCheckBox) {
-    frame.render_stateful_widget(checkbox_list.list.clone(), area, &mut checkbox_list.selected);
-}
 /////////////////////////////////////////////////////////////////////////////////////////////////
 ///// Git Operations
 /////////////////////////////////////////////////////////////////////////////////////////////////
-
-fn get_file_changes(files: Vec<String>, old_states: Vec<bool>, new_states: Vec<bool>) -> Result<(), Box<dyn std::error::Error>> {
+fn get_file_changes(checkbox_list:  &StatefulCheckBox) -> Result<(), Box<dyn std::error::Error>> {
     let top_dir = get_top_git()?;
 
-    for ((old_state, new_state), filename) in old_states.iter().zip(&new_states).zip(&files) {
+    for ((old_state, new_state), filename) in checkbox_list.original_states.iter().zip(&checkbox_list.added).zip(&checkbox_list.files) {
         if *old_state == false && *new_state == true {
             match stage_file(&filename, &top_dir) {
                 Ok(_) => println!("{} -> {}", filename.red(), filename.green()),

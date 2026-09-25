@@ -145,7 +145,8 @@ fn main() -> ExitCode {
         Commands::Unstage { file, all } => run!(git::staging::unstage(file, all)),
         Commands::Stage { files, all } => {
             if files.is_none() && !all {
-                run!(git::staging::stage_selector())
+                // run!(git::staging::stage_selector())
+                run!(git::staging::run_app())
             } else {
                 run!(git::staging::stage_files(files, all))
             }
