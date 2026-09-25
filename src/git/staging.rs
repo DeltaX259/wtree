@@ -344,9 +344,9 @@ impl<'a> App<'_> {
         let save: bool;
 
         loop {
-            let terminal = &mut self.terminal;
-            let checkbox_list = &mut self.checkbox_list;
-            terminal.draw(|frame| Self::render(frame, checkbox_list))?;
+            self.terminal.draw(|frame| { 
+                Self::render(&mut self.checkbox_list, frame)
+            })?;
             if let Event::Key(key) = event::read()? {
                 match self.button_pressed(key) {
                     Some(state) => {
@@ -380,7 +380,7 @@ impl<'a> App<'_> {
             _ => return None
         }
     }
-    fn render(frame: &mut Frame, checkbox_list: &mut StatefulCheckBox<'a>) {
+    fn render(checkbox_list:  &mut StatefulCheckBox, frame: &mut Frame) {
         let layout = Layout::vertical([
             Constraint::Length(2),
             Constraint::Min(3),

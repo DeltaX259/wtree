@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::fs;
 
 pub fn get_current_dir() -> PathBuf {
     std::env::current_dir().unwrap()
