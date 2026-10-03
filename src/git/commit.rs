@@ -6,18 +6,22 @@ use crate::utils::dir::{
 use crate::utils::worktree::get_current_worktree;
 use crate::utils::git::{get_git_status, get_git_output};
 
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+
 use ratatui_core::layout::{Constraint, Direction, Layout};
+use ratatui_core::text::Line;
 use ratatui_core::style::{Color, Modifier, Style};
-use ratatui_core::terminal::Terminal;
+use ratatui_core::terminal::{Terminal, Frame};
 use ratatui_crossterm::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui_crossterm::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui_crossterm::{CrosstermBackend, crossterm};
-use ratatui_textarea::{Input, Key, TextArea};
+use ratatui_textarea::TextArea;
 use ratatui_widgets::block::Block;
 use ratatui_widgets::borders::Borders;
 use std::io;
+use std::io::{StdoutLock};
 use std::process::Command;
 
 
@@ -78,55 +82,102 @@ fn check_upstream() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub fn make_commit() -> Result<(), Box<dyn std::error::Error>> {
-    let mut stdout = io::stdout().lock();
-    enable_raw_mode()?;
-    crossterm::execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut term = Terminal::new(backend)?;
+struct AppData<'a> {
+    textarea: Vec<TextBox<'a>>,
+    layout: Layout,
+    footer: Line<'a>,
+    which: usize,
+}
+struct App<'a> {
+    terminal:  Terminal<CrosstermBackend<StdoutLock<'a>>>,
+    data: AppData<'a>,
+}
+impl<'a> App<'_> {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let mut stdout = io::stdout().lock();
+        enable_raw_mode()?;
+        crossterm::execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        let backend = CrosstermBackend::new(stdout);
+        let terminal = Terminal::new(backend)?;
+        let textarea = vec![
+            TextBox::new("Commit title", Active::Active),
+            TextBox::new("Commit message", Active::NotActive),
+        ];
 
-    let mut textarea = vec![
-        TextBox::new("Commit title", Active::Active),
-        TextBox::new("Commit message", Active::NotActive),
-    ];
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(3), Constraint::Percentage(90), Constraint::Min(1)].as_ref());
 
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Percentage(90), Constraint::Min(1)].as_ref());
+        let footer = ratatui::text::Line::from("Tab = Switch textbox | Ctrl+x = Finish commit | Esc = Quit").centered().style(Style::new().blue());
+        let which = 0;
 
-    let footer = ratatui::text::Line::from("Tab = Switch textbox | Ctrl+x = Finish commit | Esc = Quit").centered().style(Style::new().blue());
-    let mut which = 0;
-
-    loop {
-        term.draw(|f| {
-            let chunks = layout.split(f.area());
-            for (textarea, chunk) in textarea.iter().zip(chunks.iter()) {
-                f.render_widget(&textarea.textarea, *chunk);
-            }
-            f.render_widget(&footer, chunks[2]);
-        })?;
-        match crossterm::event::read()?.into() {
-            Input { key: Key::Esc, .. } => {
-                exit(&mut term)?;
-                return Ok(());
-            }
-            Input { key: Key::Tab, .. } => {
-                textarea[0].switch();
-                which = (which + 1) % 2;
-                textarea[1].switch();
-            }
-            Input { key: Key::Char('x'), ctrl: true, .. } => {
-                break
-            }
-            input => {
-                textarea[which].textarea.input(input);
+        Ok(Self {
+            terminal: terminal,
+            data: AppData { textarea, layout, footer, which },
+        })
+    }
+    fn run(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+        loop {
+            let terminal = &mut self.terminal;
+            terminal.draw(|frame| {
+                Self::render(frame, &mut self.data)
+            })?;
+            if let Event::Key(key) = event::read()? {
+                match Self::button_pressed(&mut self.data, key) {
+                    Some(save_changes) => {
+                        return Ok(save_changes)
+                    },
+                    None => {},
+                }
             }
         }
     }
-
-    exit(&mut term)?;
-    git_commit(textarea)?;
-    Ok(())
+    fn button_pressed(app: &mut AppData, key: KeyEvent) -> Option<bool>{
+        match key.code {
+            KeyCode::Esc => {
+                return Some(false)
+            },
+            KeyCode::Tab => {
+                app.textarea[0].switch();
+                app.which = (app.which + 1) % 2;
+                app.textarea[1].switch();
+                return None
+            },
+            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Some(true)
+            }
+            _ => {
+                app.textarea[app.which].textarea.input(key);
+                return None
+            }
+        }
+    }
+    fn render(frame: &mut Frame, app: &mut AppData) {
+        let chunks = app.layout.split(frame.area());
+        for (textarea, chunk) in app.textarea.iter().zip(chunks.iter()) {
+            frame.render_widget(&textarea.textarea, *chunk);
+        }
+        frame.render_widget(&app.footer, chunks[2]);
+    }
+    fn exit(&mut self, save_state: bool) -> Result<(), Box<dyn std::error::Error>> {
+        exit(&mut self.terminal)?;
+        if save_state {
+            git_commit(&self.data.textarea)?;
+        }
+        return Ok(())
+    }
+}
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+pub fn make_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = App::new()?;
+    let result = app.run();
+    match result {
+        Ok(save_state) => {
+            app.exit(save_state)?;
+            return Ok(())
+        }
+        Err(e) => return Err(e)
+    }
 }
 
 enum Active {
@@ -209,7 +260,7 @@ fn exit(term: &mut Terminal<CrosstermBackend<std::io::StdoutLock<'_>>>) -> io::R
     Ok(())
 }
 
-fn git_commit(textarea: Vec<TextBox>) -> Result<(), Box<dyn std::error::Error>> {
+fn git_commit(textarea: &Vec<TextBox>) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = get_current_dir();
     let status = Command::new("git")
         .args(["commit", "-m", textarea[0].textarea.lines().join("\n").as_str(), "-m", textarea[1].textarea.lines().join("\n").as_str(), "-q"])
@@ -220,6 +271,6 @@ fn git_commit(textarea: Vec<TextBox>) -> Result<(), Box<dyn std::error::Error>> 
     } else {
         println!("Commit failed");
     }
-    
+
     Ok(())
 }

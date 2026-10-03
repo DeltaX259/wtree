@@ -1,18 +1,21 @@
 use crate::utils::dir::get_current_dir;
 use crate::utils::git::{get_git_output};
 
+use crossterm::event::KeyEvent;
 use crossterm::event::{self, Event::{self}, KeyCode, KeyModifiers};
+use ratatui_crossterm::CrosstermBackend;
 use color_eyre::Result;
 use regex::Regex;
 use ansi_to_tui::IntoText;
 use ratatui::{
-    DefaultTerminal,
+    Terminal,
     layout::{Constraint, Rect, Layout},
     Frame,
     style::{Modifier, Color, Style},
     widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
     text::Span,
 };
+use std::io::Stdout;
 
 struct StatefulList<'a> {
     list: List<'a>,
@@ -132,9 +135,12 @@ fn get_diff(file: &str) -> Result<String, Box<dyn std::error::Error>> {
         return Ok(String::from(""));
     }
     let current_dir = get_current_dir();
+    println!("current dir {}", current_dir.display());
+    println!("file: {}", &file);
     let output = get_git_output(&vec!["diff", "-U1000000", "--word-diff", &file], &current_dir)?;
 
     let mut diff_lines = String::from_utf8_lossy(&output.stdout).to_string();
+    println!("content: {}", &diff_lines);
     diff_lines = skip_lines(&diff_lines, 5);
 
     let regex_added = Regex::new(r"\{([+])|([+])\}").expect("Invalid regex");
@@ -165,12 +171,11 @@ fn parse_diff(text: &str, reg: Regex, r1: &str, r2: &str) -> String {
 
 pub fn diff(file: Option<String>) -> Result<(), Box< dyn std::error::Error>> {
     let files = get_list();
-    let mut stateful_files = StatefulList::new(files);
+    let stateful_files = StatefulList::new(files);
 
-    color_eyre::install()?;
-    ratatui::run(|terminal| {
-        let _ = app(terminal, &mut stateful_files, file);
-    });
+    let mut app = App::new(file, stateful_files)?;
+    app.run()?;
+    app.exit();
 
     Ok(())
 }
@@ -184,90 +189,135 @@ fn get_list() -> Vec<String> {
         .map(ToString::to_string)
         .collect()
 }
+////////////////////////////////////////////////////////////////////////////////////////////////
+enum ButtonAction {
+    View,
+    Exit, 
+    Nothing,
+}
 
-fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: Option<String>) -> Result<(), Box<dyn std::error::Error>>{
-    let mut p1 = if let Some(f) = &file {
-        let content = get_diff(&f)?;
-        let mut p = StatefulParagraph::new(content)?;
-        p.update_title(f.clone());
-        p.update_subtitle(" Scroll: Up/Down Quit: q/Esc ".to_string());
-        p
-    } else {
-        StatefulParagraph::new(String::new())?
-    };
+struct AppData<'a> {
+    file: Option<String>,
+    paragraph: StatefulParagraph<'a>,
+    file_list: StatefulList<'a>,
+}
+struct App<'a> {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+    data: AppData<'a>,
+}
+impl<'a> App<'_> {
+    fn new(file: Option<String>, file_list: StatefulList<'a>) -> Result<App<'a>, Box<dyn std::error::Error>> {
+        color_eyre::install()?;
+        let terminal = ratatui::init();
 
-    loop {
-        let area = terminal.size()?;
-        p1.max_scroll = std::cmp::max(area.height, (p1.text.line_count(area.width / 2) as u16) + 3);
-        p1.max_scroll -= area.height;
-            
-        terminal.draw(|frame| {
-            render(frame, &mut file_list, &mut p1, &file);
-        })?;
-        
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                KeyCode::Down | KeyCode::Char('s') => {
-                    if key.modifiers == KeyModifiers::CONTROL || !file.is_none() {
-                        p1.next()
-                    } else {
-                        file_list.next()
-                    }
-                },
-                KeyCode::Up | KeyCode::Char('w') => {
-                    if key.modifiers == KeyModifiers::CONTROL || !file.is_none() {
-                        p1.previous();
-                    } else {
-                        file_list.previous()
-                    }
-                },
-                KeyCode::Enter => {
-                    if file.is_none() {
-                        if let Some(selected_idx) = file_list.state.selected() {
-                            let selected_item = file_list.items[selected_idx].clone();
-                            let content = get_diff(&selected_item)?;
-                            p1 = StatefulParagraph::new(content)?;
-                            p1.update_title(selected_item);
-                            p1.update_subtitle(" Scroll: Ctrl+Up/Down ".to_string());
-                        }
-                    }
+        let paragraph = if let Some(f) = &file {
+            let content = get_diff(&f)?;
+            let mut p = StatefulParagraph::new(content)?;
+            p.update_title(f.clone());
+            p.update_subtitle(" Scroll: Up/Down Quit: q/Esc ".to_string());
+            p
+        } else {
+            StatefulParagraph::new(String::new())?
+        };
+
+        Ok(App {
+            terminal: terminal,
+            data: AppData { file: file, paragraph: paragraph, file_list: file_list }
+        })
+    }
+    fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            let area = self.terminal.size()?;
+            self.data.paragraph.max_scroll = std::cmp::max(area.height, (self.data.paragraph.text.line_count(area.width / 2) as u16) + 3);
+            self.data.paragraph.max_scroll -= area.height;
+
+            self.terminal.draw(|frame| {
+                Self::render(frame, &mut self.data);
+            })?;
+
+            if let Event::Key(key) = event::read()? {
+                match Self::button_pressed(&mut self.data, key)? {
+                    ButtonAction::View => {},
+                    ButtonAction::Nothing => {},
+                    ButtonAction::Exit => { 
+                        return Ok(())
+                   },
                 }
-                _ => {},
             }
         }
     }
-}
+    fn button_pressed(app: &mut AppData, key: KeyEvent) -> Result<ButtonAction, Box<dyn std::error::Error>> {
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => Ok(ButtonAction::Exit),
+            KeyCode::Down | KeyCode::Char('s') => {
+                if key.modifiers == KeyModifiers::CONTROL || !app.file.is_none() {
+                    app.paragraph.next();
+                    return Ok(ButtonAction::Nothing)
+                } else {
+                    app.file_list.next();
+                    return Ok(ButtonAction::Nothing)
+                }
+            },
+            KeyCode::Up | KeyCode::Char('w') => {
+                if key.modifiers == KeyModifiers::CONTROL || !app.file.is_none() {
+                    app.paragraph.previous();
+                    return Ok(ButtonAction::Nothing)
 
-fn render(frame: &mut Frame, file_list: &mut StatefulList, p1: &mut StatefulParagraph, file: &Option<String>) {
-
-    let chunk_size: u16 ;
-    if file.is_none() {
-        chunk_size = 50;
-    } else {
-        chunk_size = 100;
+                } else {
+                    app.file_list.previous();
+                    return Ok(ButtonAction::Nothing)
+                }
+            },
+            KeyCode::Enter => {
+                if app.file.is_none() {
+                    if let Some(selected_idx) = app.file_list.state.selected() {
+                        let selected_item = app.file_list.items[selected_idx].clone();
+                        let content = get_diff(&selected_item)?;
+                        app.paragraph = StatefulParagraph::new(content)?;
+                        app.paragraph.update_title(selected_item);
+                        app.paragraph.update_subtitle(" Scroll: Ctrl+Up/Down ".to_string());
+                        return Ok(ButtonAction::View)
+                    }
+                }
+                return Ok(ButtonAction::Nothing)
+            }
+            _ => return Ok(ButtonAction::Nothing),
+        }
     }
-    let chunks = Layout::default()
-        .direction(ratatui::layout::Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(chunk_size),
-            Constraint::Min(0)
-        ])
-        .split(frame.area());
+    fn render(frame: &mut Frame, app: &mut AppData) {
+
+        
+        let chunk_size: u16 ;
+        if app.file.is_none() {
+            chunk_size = 50;
+        } else {
+            chunk_size = 100;
+        }
+        let chunks = Layout::default()
+            .direction(ratatui::layout::Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(chunk_size),
+                Constraint::Min(0)
+            ])
+            .split(frame.area());
+
+        if app.file.is_none() {
+            Self::render_list(frame, app, chunks[0]);
+            Self::render_diff(frame, app, chunks[1]);
+        } else {
+            Self::render_diff(frame, app, chunks[0]);
+        }
+    }
+
+    fn render_list(frame: &mut Frame, app: &mut AppData, chunk: Rect) {
+        frame.render_stateful_widget(app.file_list.list.clone(), chunk, &mut app.file_list.state);
+    }
     
-    if file.is_none() {
-        render_list(frame, file_list, chunks[0]);
-        render_diff(frame, p1, chunks[1]);
-    } else {
-        render_diff(frame, p1, chunks[0]);
+    fn render_diff(frame: &mut Frame, app: &mut AppData, chunk: Rect) {
+        app.paragraph.text = app.paragraph.text.clone().scroll((app.paragraph.scroll_offset, 0));
+        frame.render_widget(app.paragraph.text.clone(), chunk);
     }
-}
-
-fn render_list(frame: &mut Frame, file_list: &mut StatefulList, chunk: Rect) {
-    frame.render_stateful_widget(file_list.list.clone(), chunk, &mut file_list.state);
-}
-
-fn render_diff(frame: &mut Frame, p1: &mut StatefulParagraph, chunk: Rect) {
-    p1.text = p1.text.clone().scroll((p1.scroll_offset, 0));
-    frame.render_widget(p1.text.clone(), chunk);
+    fn exit(&mut self) {
+        ratatui::restore();
+    }
 }
