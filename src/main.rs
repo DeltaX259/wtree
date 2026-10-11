@@ -156,6 +156,7 @@ fn main() -> ExitCode {
         Commands::Commit => run!(git::commit::make_commit()),
         Commands::Push { force } => run!(git::commit::git_push(force)),
         Commands::Diff { file } => run!(git::diff::diff(file)),
+
         
         Commands::Pull => run!(git::pull::pull()),
         Commands::Branch { branch } => {

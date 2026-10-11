@@ -249,7 +249,7 @@ impl TextBox<'_> {
     }
 }
 
-fn exit(term: &mut Terminal<CrosstermBackend<std::io::StdoutLock<'_>>>) -> io::Result<()> {
+fn exit(term: &mut Terminal<CrosstermBackend<std::io::StdoutLock<'_>>>) -> std::io::Result<()> {
     disable_raw_mode()?;
     crossterm::execute!(
         term.backend_mut(),
