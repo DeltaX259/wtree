@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use crate::utils::dir::{get_current_dir, get_top_git};
 use crate::utils::git::{get_git_status, get_git_output};
 use ratatui::Terminal;
-use color_eyre::Result;
 use ratatui::prelude::CrosstermBackend;
 use std::io::Stdout;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -340,7 +339,7 @@ impl<'a> App<'_> {
 
         Ok(Self { terminal, checkbox_list })
     }
-    fn run(&mut self) -> Result<bool> {
+    fn run(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
         let save: bool;
 
         loop {
@@ -423,7 +422,7 @@ impl<'a> App<'_> {
     fn render_checkboxes(frame: &mut Frame, area: Rect, checkbox_list: &mut StatefulCheckBox) {
         frame.render_stateful_widget(checkbox_list.list.clone(), area, &mut checkbox_list.selected);
     }
-    fn exit(&mut self, result: Result<bool>) -> Result<(), Box<dyn std::error::Error>> {
+    fn exit(&mut self, result: Result<bool, Box<dyn std::error::Error>>) -> Result<(), Box<dyn std::error::Error>> {
         ratatui::restore();
 
         if result.unwrap_or(false) == true {

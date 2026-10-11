@@ -1,11 +1,9 @@
-use crate::utils::dir::get_current_dir;
-use crate::utils::git::{get_git_output};
+use crate::utils::dir::{get_current_dir, get_top_git};
+use crate::utils::git::{FileState, get_git_output};
 
 use crossterm::event::KeyEvent;
 use crossterm::event::{self, Event::{self}, KeyCode, KeyModifiers};
 use ratatui_crossterm::CrosstermBackend;
-use color_eyre::Result;
-use regex::Regex;
 use ansi_to_tui::IntoText;
 use ratatui::{
     Terminal,
@@ -13,9 +11,10 @@ use ratatui::{
     Frame,
     style::{Modifier, Color, Style},
     widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
-    text::Span,
+    text::{Span,Text, Line},
 };
 use std::io::Stdout;
+use std::process::Command;
 
 struct StatefulList<'a> {
     list: List<'a>,
@@ -74,10 +73,9 @@ struct StatefulParagraph<'a> {
     subtitle: String,
     default_style: Style,
 }
-impl StatefulParagraph<'_> {
-    fn new(text: String) -> Result<Self, Box<dyn std::error::Error>> {
-        let t2 = text.into_text()?;
-        let p = Paragraph::new(t2)
+impl<'a> StatefulParagraph<'a> {
+    fn new(text: Paragraph<'a>) -> Result<Self, Box<dyn std::error::Error>> {
+        let p = text
             .wrap(Wrap { trim: false })
             .block(
                 Block::bordered()
@@ -126,68 +124,146 @@ impl StatefulParagraph<'_> {
                     .title(Span::styled(self.title.clone(), self.default_style))
                     .title_bottom(Span::styled(self.subtitle.clone(), self.default_style))
                     .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::White))
             );
     }
 }
 
-fn get_diff(file: &str) -> Result<String, Box<dyn std::error::Error>> {
-    if file == String::from("") {
-        return Ok(String::from(""));
-    }
-    let current_dir = get_current_dir();
-    println!("current dir {}", current_dir.display());
-    println!("file: {}", &file);
-    let output = get_git_output(&vec!["diff", "-U1000000", "--word-diff", &file], &current_dir)?;
-
-    let mut diff_lines = String::from_utf8_lossy(&output.stdout).to_string();
-    println!("content: {}", &diff_lines);
-    diff_lines = skip_lines(&diff_lines, 5);
-
-    let regex_added = Regex::new(r"\{([+])|([+])\}").expect("Invalid regex");
-    let regex_removed = Regex::new(r"\[([-])|([-])\]").expect("Invalid regex");
-    let reset = "\x1b[0m";
-
-    diff_lines = parse_diff(&diff_lines, regex_added, "\x1b[1;30;42m", reset); // Green
-    diff_lines = parse_diff(&diff_lines, regex_removed, "\x1b[1;30;41m", reset); // Red
-
-    Ok(diff_lines)
+////////////////////////////////////////////////////////////////////////////////////////////////
+#[derive(Clone)]
+struct GitDiff<'a> {
+    path: String,
+    content: Paragraph<'a>,
+    status: FileState,
+    staged: bool,
 }
+impl<'a> GitDiff<'a> {
+    fn new(file: &str) -> Result<Self, Box<dyn std::error::Error>> {
 
-fn skip_lines(s: &str, n: usize) -> String {
-    s.lines()
-        .skip(n)
-        .collect::<Vec<&str>>()
-        .join("\n")
-}
+        if file.len() < 2 { return Err("Empty git status --porcelain line".into()) }
+        let status = match &file[..2] {
+            "A " | " A" | "??" => FileState::New,
+            "M " | " M" =>  FileState::Modified,
+            "D " | " D" =>  FileState::Deleted,
+            "R " | " R" =>  FileState::Renamed,
+            _ =>  FileState::Error,
+        };
+        let staged = match &file[..1] {
+            " " | "?" => false,
+            "A" | "M" | "D" | "R" => true,
+            _ => false
+        };
+        
+        let mut content = Paragraph::new("");
+        let mut path = file[3..].trim().to_string();
 
-fn parse_diff(text: &str, reg: Regex, r1: &str, r2: &str) -> String {
-    reg.replace_all(&text, |caps: &regex::Captures| {
-        match caps.get(2) {
-            Some(_) => r2,
-            None => r1,
+        if path.starts_with('"') && path.ends_with('"') {
+            path = path[1..path.len()-1].to_string();
         }
-    }).to_string()
+
+        if status == FileState::Renamed {
+            let (old, new) = path.split_once(" -> ").ok_or_else(|| { std::io::Error::new(std::io::ErrorKind::InvalidData, "Input does not contain ' -> '")})?;
+            content = Paragraph::new(Line::from(vec![
+                Span::styled(old.to_owned(), Style::default().fg(Color::Red)),
+                Span::styled(" -> ", Style::default()),
+                Span::styled(new.to_owned(), Style::default().fg(Color::Green))
+            ]));
+            path = new.to_string();
+        }
+        
+        return Ok(Self {
+            path: path,
+            content: content,
+            status: status,
+            staged: staged,
+        })
+    }
+    fn get_content(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let current_dir = get_current_dir();
+        let top_dir = get_top_git()?;
+
+        match self.status {
+            FileState::New => {
+                let file_path = format!("{}/{}", top_dir.display(), &self.path);
+
+                let output = get_git_output(&vec!["diff", "-U1000000", "--raw", &self.path], &current_dir)?;
+            
+                if !output.status.success() {
+                    let content = String::from_utf8_lossy(&output.stderr).to_string();
+                    self.content = Paragraph::new(content);
+                } else {
+                    let content = std::fs::read_to_string(file_path)?;
+                    self.content = Paragraph::new(Text::styled(content, Style::default().fg(Color::Green)));
+                }
+            }
+            FileState::Modified => {
+                let file_path = format!("{}/{}", top_dir.display(), &self.path);
+ 
+                let args = match self.staged {
+                    true => {
+                        vec!["diff", "-U1000000", "--color=always", "HEAD^", "--", &file_path]
+                    },
+                    false => {
+                        vec!["diff", "-U1000000", "--color=always", "HEAD^", "--", &file_path]
+                    }
+                };
+                
+                let output = Command::new("git")
+                        .args(args)
+                        .output()?;
+                
+                if !output.status.success() {
+                    return Err(format!("git diff failed: {}", String::from_utf8_lossy(&output.stderr)).into());
+                }
+
+                let mut diff = String::from_utf8(output.stdout)?;
+                diff = diff.lines().skip(5).collect::<Vec<&str>>().join("\n");
+                let text: Text<'static> = diff.into_text()?;
+                self.content = Paragraph::new(text);
+            },
+            FileState::Renamed => {},
+            FileState::Deleted => {
+                let head = format!("HEAD:{}", &self.path);
+                let output = get_git_output(&vec!["show", &head], &current_dir)?;
+    
+                if !output.status.success() {
+                    let content = String::from_utf8_lossy(&output.stderr).to_string();
+                    self.content = Paragraph::new(content);
+                } else {
+                    let content = String::from_utf8_lossy(&output.stdout).to_string();
+                    self.content = Paragraph::new(content).style(Style::default().fg(Color::Red));
+                }
+            }
+            _ => {
+                self.content = Paragraph::new("Error");
+            }
+       };
+        Ok(())
+    }
 }
 
-pub fn diff(file: Option<String>) -> Result<(), Box< dyn std::error::Error>> {
-    let files = get_list();
-    let stateful_files = StatefulList::new(files);
-
-    let mut app = App::new(file, stateful_files)?;
-    app.run()?;
-    app.exit();
-
-    Ok(())
-}
-
-fn get_list() -> Vec<String> {
+pub fn diff(file: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = get_current_dir();
-    let output = get_git_output(&vec!["diff", "--name-only"], &current_dir).expect("Failed to run git diff --name-only");
+    let output = get_git_output(&vec!["status", "--porcelain"], &current_dir)?;
+    if !output.status.success() {
+        return Err("'git status --porcelain' failed".into())
+    }
+    let mut files: Vec<GitDiff> = Vec::new();
+    let output = String::from_utf8_lossy(&output.stdout).to_string();
+    for line in output.lines() {
+        let gitdiff = GitDiff::new(line)?;
+        files.push(gitdiff);
+    }
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(ToString::to_string)
-        .collect()
+    let mut app = App::new(file, files)?;
+    match app.run() {
+        Ok(_) => app.exit(),
+        Err(e) => {
+            app.exit();
+            return Err(e)
+        }
+    }
+    Ok(())
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////
 enum ButtonAction {
@@ -200,29 +276,41 @@ struct AppData<'a> {
     file: Option<String>,
     paragraph: StatefulParagraph<'a>,
     file_list: StatefulList<'a>,
+    files: Vec<GitDiff<'a>>,
 }
 struct App<'a> {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     data: AppData<'a>,
 }
 impl<'a> App<'_> {
-    fn new(file: Option<String>, file_list: StatefulList<'a>) -> Result<App<'a>, Box<dyn std::error::Error>> {
+    fn new(file: Option<String>, files: Vec<GitDiff<'a>>) -> Result<App<'a>, Box<dyn std::error::Error>> {
         color_eyre::install()?;
         let terminal = ratatui::init();
 
         let paragraph = if let Some(f) = &file {
-            let content = get_diff(&f)?;
-            let mut p = StatefulParagraph::new(content)?;
-            p.update_title(f.clone());
-            p.update_subtitle(" Scroll: Up/Down Quit: q/Esc ".to_string());
-            p
-        } else {
-            StatefulParagraph::new(String::new())?
-        };
+            let top_dir = get_top_git()?;
+            let file_path = format!("{}/{}", top_dir.display(), f.trim());
 
+            let current_dir = get_current_dir();
+            let output = get_git_output(&vec!["status", "--porcelain", &file_path], &current_dir)?;
+            if !output.status.success() {
+                return Err("'git status --porcelain' failed".into())
+            }
+            let output = String::from_utf8_lossy(&output.stdout).to_string();
+            let mut diff = GitDiff::new(&output)?;
+            diff.get_content()?;
+            StatefulParagraph::new(diff.content)?
+        } else {
+            StatefulParagraph::new(Paragraph::new(String::new()))?
+        };
+        
+        let file_list = StatefulList::new(
+            files.clone()
+                 .into_iter()
+                 .map(|file|file.path).collect());
         Ok(App {
             terminal: terminal,
-            data: AppData { file: file, paragraph: paragraph, file_list: file_list }
+            data: AppData { file: file, paragraph: paragraph, file_list: file_list, files: files }
         })
     }
     fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -272,8 +360,8 @@ impl<'a> App<'_> {
                 if app.file.is_none() {
                     if let Some(selected_idx) = app.file_list.state.selected() {
                         let selected_item = app.file_list.items[selected_idx].clone();
-                        let content = get_diff(&selected_item)?;
-                        app.paragraph = StatefulParagraph::new(content)?;
+                        app.files[selected_idx].get_content()?;
+                        app.paragraph = StatefulParagraph::new(app.files[selected_idx].content.clone())?;
                         app.paragraph.update_title(selected_item);
                         app.paragraph.update_subtitle(" Scroll: Ctrl+Up/Down ".to_string());
                         return Ok(ButtonAction::View)
