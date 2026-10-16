@@ -1,7 +1,8 @@
 use std::path::PathBuf;
-use std::process::Command;
 use std::fs;
 use crate::utils::dir::get_current_dir;
+use crate::utils::git::{get_git_status, get_git_output};
+
 
 pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     let repo_name = repo_url
@@ -14,28 +15,17 @@ pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn 
     let bare_dir = repo_dir.join(".bare");
     fs::create_dir_all(&bare_dir)?;
 
-    let status = match branch {
+    let mut args = vec!("clone", "-q", "--bare", repo_url, ".bare");
+
+    match branch {
         Some(ref branch_name) => {
-            Command::new("git")
-                .arg("clone")
-                .arg("--bare")
-                .arg(repo_url)
-                .arg(".bare")
-                .arg("-b")
-                .arg(&branch_name)
-                .current_dir(&repo_dir)
-                .status()?
-        }
-        None => {
-            Command::new("git")
-                .arg("clone")
-                .arg("--bare")
-                .arg(repo_url)
-                .arg(".bare")
-                .current_dir(&repo_dir)
-                .status()?
-        }
+            args.push("-b");
+            args.push(&branch_name);
+        },
+        None => (),
     };
+
+    let status = get_git_status(&args, &repo_dir)?;
 
     if !status.success() {
         return Err("git clone --bare failed".into());
@@ -43,64 +33,24 @@ pub fn clone_repo(repo_url: &str, branch: Option<String>) -> Result<(), Box<dyn 
 
     fs::write(repo_dir.join(".git"), "gitdir: ./.bare\n")?;
 
-    let status = Command::new("git")
-        .args([
-            "config",
-            "remote.origin.fetch",
-            "+refs/heads/*:refs/remotes/origin/*",
-        ])
-        .current_dir(&repo_dir)
-        .status()?;
-
-    if !status.success() {
-        return Err("git fetch failed".into());
-    }
-
     let branch = match branch {
         Some(ref branch_name) => branch_name,
         None => {
-            let output = Command::new("git")
-                .args(["branch", "--show-current"])
-                .current_dir(&repo_dir)
-                .output()
-                .unwrap();
+            let output = get_git_output(&vec!["branch", "--show-current"], &repo_dir)?;
+
             &String::from_utf8_lossy(&output.stdout)
                 .trim()
                 .to_string()
         }
     };
 
-    let status = Command::new("git")
-        .args(["worktree", "add", branch])
-        .current_dir(&repo_dir)
-        .status()?;
+    let status = get_git_status(&vec!["worktree", "add", branch, "-q"], &repo_dir)?;
 
-        if !status.success() {
-            return Err("git worktree add failed".into());
-        }
+    if !status.success() {
+        return Err("git worktree add failed".into());
+    }
 
     println!("Repository initialized");
 
     Ok(())
 }
-
-
-pub fn fetch_repo() -> Result<(), Box<dyn std::error::Error>> {
-    let repo_path = get_current_dir();
-
-    let status = Command::new("git")
-    .args(["fetch", "--all"])
-    .current_dir(&repo_path)
-    .status()?;
-
-    if !status.success() {
-        return Err("git fetch failed".into());
-    }
-
-    println!("Successfully fetched repo");
-
-    Ok(())
-}
-
-
-

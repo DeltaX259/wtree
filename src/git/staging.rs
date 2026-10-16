@@ -1,10 +1,17 @@
-use std::process::Command;
 use colored::Colorize;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
-use crate::utils::dir::{
-    get_current_dir,
+use crate::utils::dir::{get_current_dir, get_top_git};
+use crate::utils::git::{get_git_status, get_git_output};
+use ratatui::Terminal;
+use ratatui::prelude::CrosstermBackend;
+use std::io::Stdout;
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{
+    border, Frame, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, List, ListItem, ListState, Padding, Paragraph},
 };
+
 
 pub fn stage_files(mut files: Option<Vec<String>>, all: bool) -> Result<(), Box<dyn std::error::Error>> {
     let staged_files_initial = get_staged_files()?;
@@ -12,7 +19,7 @@ pub fn stage_files(mut files: Option<Vec<String>>, all: bool) -> Result<(), Box<
     if all {
         let mut file = Vec::new();
         file.push(".".to_string());
-        files = Some(file);        
+        files = Some(file);
     }
     
     let files = match files {
@@ -22,9 +29,9 @@ pub fn stage_files(mut files: Option<Vec<String>>, all: bool) -> Result<(), Box<
             return Ok(())
         }
     };
-    
+    let current_dir = get_current_dir();
     for file in files.iter() {
-        stage_file(file)?;
+        stage_file(file, &current_dir)?;
     }
 
     let staged_files_final = get_staged_files()?;
@@ -35,14 +42,13 @@ pub fn stage_files(mut files: Option<Vec<String>>, all: bool) -> Result<(), Box<
     Ok(())
 }
 
-fn stage_file(file: &String) -> Result<(), Box<dyn std::error::Error>> {
-    let current_dir = get_current_dir();
+fn stage_file(file: &String, location: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let status = get_git_status(&vec!["add", &file], location)?;
 
-    let _ = Command::new("git")
-        .args(["add", &file])
-        .current_dir(current_dir)
-        .status()?;
-    
+    if !status.success() {
+        return Err(format!("Failed to unstage file {}", file).into())
+    }
+
     Ok(())
 }
 
@@ -53,21 +59,19 @@ pub fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error
         return Err("No file specified".into());
     }
 
+    let current_dir = get_current_dir();
+
     if !all {
         let file = file.unwrap();
-        unstage_file(file)?;
+        unstage_file(file, &current_dir)?;
     } else {
-        let current_dir = get_current_dir();
 
-        let output = Command::new("git")
-            .args(["status", "--porcelain"])
-            .current_dir(&current_dir)
-            .output()?;
+        let output = get_git_output(&vec!["status", "--porcelain"], &current_dir)?;
 
         let status = String::from_utf8_lossy(&output.stdout).to_string();
         for line in status.lines() {
             if line.starts_with("A ") || line.starts_with("M ") {
-                unstage_file(line[3..].to_string())?;
+                unstage_file(line[3..].to_string(), &current_dir)?;
             }
         }
     }
@@ -81,16 +85,11 @@ pub fn unstage(file: Option<String>, all: bool) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-fn unstage_file(file: String) -> Result<(), Box<dyn std::error::Error>> {
-    let path = get_current_dir();
-
-    let status = Command::new("git")
-        .args(["restore", "--staged", &file])
-        .current_dir(&path)
-        .status()?;
+fn unstage_file(file: String, location: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let status = get_git_status(&vec!["restore", "--staged", &file], location)?;
 
     if !status.success() {
-        return Err(format!("Failed to stage file {}", file).into())
+        return Err(format!("Failed to unstage file {}", file).into())
     }
   
     Ok(())
@@ -98,11 +97,8 @@ fn unstage_file(file: String) -> Result<(), Box<dyn std::error::Error>> {
 
 fn get_staged_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let current_dir = get_current_dir();
-    let output = Command::new("git")
-        .args(["diff", "--cached", "--name-only"])
-        .current_dir(&current_dir)
-        .output()?;
-    
+    let output = get_git_output(&vec!["diff", "--cached", "--name-only"], &current_dir)?;
+
     let staged_files_list = String::from_utf8_lossy(&output.stdout).to_string();
     let staged_files = string_to_vec(staged_files_list)?;
     Ok(staged_files)
@@ -123,4 +119,344 @@ fn list_diff(l1: Vec<String>, l2: Vec<String>) -> Vec<String> {
         .filter(|s| !list_2.contains(s))
         .clone()
         .collect()
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#[derive(Clone)]
+enum State {
+    New,
+    Modified,
+    Deleted,
+    Renamed,
+    Error,
+}
+#[derive(Clone)]
+struct StatefulCheckBox<'a> {
+    files: Vec<String>,
+    states: Vec<State>,
+    added: Vec<bool>,
+    original_states: Vec<bool>,
+    list: List<'a>,
+    selected: ListState,
+}
+impl StatefulCheckBox<'_> {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let (files, added, states) = Self::get_file_states()?;
+        let list = Self::generateList(files.clone(), added.clone(), states.clone());
+        Ok(Self {
+            files: files,
+            states: states,
+            added: added.clone(),
+            original_states: added,
+            list: list, 
+            selected: ListState::default().with_selected(Some(0)),
+        })
+    }
+    fn get_file_states() -> Result<(Vec<String>, Vec<bool>, Vec<State>), Box<dyn std::error::Error>> {
+        let current_dir = get_current_dir();
+        let args = vec!["status", "--porcelain"];
+        let output = get_git_output(&args, &current_dir)?;
+        
+        if !output.status.success() {
+            let _stderr = String::from_utf8_lossy(&output.stderr);
+            return Ok((Vec::new(), Vec::new(), Vec::new()));
+        }
+    
+        let output = String::from_utf8_lossy(&output.stdout).to_string();
+        let mut files: Vec<String> = Vec::new();
+        let mut added: Vec<bool> = Vec::new();
+        let mut states: Vec<State> = Vec::new();
+        
+        for line in output.lines() {
+            match &line[..2] {
+                "A " | "M " | "D " | "R "=> {
+                    files.push(
+                        line[3..]
+                            .trim()
+                            .strip_prefix('"')
+                            .and_then(|f| f.strip_suffix('"'))
+                            .unwrap_or(&line[3..])
+                            .to_string()
+                    );
+                    added.push(true);
+                    match &line[..2] {
+                        "A " => states.push(State::New),
+                        "M " => states.push(State::Modified),
+                        "D " => states.push(State::Deleted),
+                        "R " => states.push(State::Renamed),
+                        _ => states.push(State::Error),
+                    }
+                },
+                " M" | "??" | " D" | " R" => {
+                    files.push(
+                        line[3..]
+                            .trim()
+                            .strip_prefix('"')
+                            .and_then(|f| f.strip_suffix('"'))
+                            .unwrap_or(&line[3..])
+                            .to_string()
+                    );
+                    added.push(false);
+                    match &line[..2] {
+                        "??" => states.push(State::New),
+                        " M" => states.push(State::Modified),
+                        " D" => states.push(State::Deleted),
+                        " R" => states.push(State::Renamed),
+                        _ => states.push(State::Error),
+                    }
+                },
+                _ => {
+                    files.push(
+                        line[3..]
+                            .trim()
+                            .strip_prefix('"')
+                            .and_then(|f| f.strip_suffix('"'))
+                            .unwrap_or(&line[3..])
+                            .to_string()
+                    );
+                    added.push(false);
+                    states.push(State::Error);
+                },
+            };
+        }
+        return Ok((files, added, states))
+    }
+    #[allow(nonstandard_style)]
+    fn generateList(files: Vec<String>, added: Vec<bool>, states: Vec<State>) -> List<'static> {
+        let mut list_items: Vec<ListItem> = Vec::new();
+        for ((item, added_state), state) in files.iter().zip(added).zip(states) {
+            let checkmark;
+            let color;
+            let print_state;
+            match added_state {
+                true => {
+                    checkmark = "  ✅".to_string();
+                    match state {
+                        State::New => { 
+                            color = Color::Green;
+                            print_state = "      New    ";
+                        },
+                        State::Modified | State::Renamed => { 
+                            color = Color::Yellow;
+                            print_state = "      Mod    ";
+                        },
+                        State::Deleted => { 
+                            color = Color::Red;
+                            print_state = "      Del    ";
+                        },
+                        State::Error => { 
+                            color = Color::LightRed;
+                            print_state = "      Err    ";
+                        },
+                    }
+                },
+                false => {
+                    checkmark = "  []".to_string();
+                    match state {
+                        State::New => { 
+                            color = Color::Green;
+                            print_state = "      New    ";
+                        },
+                        State::Modified | State::Renamed => { 
+                            color = Color::Yellow;
+                            print_state = "      Mod    ";
+                        },
+                        State::Deleted => { 
+                            color = Color::Red;
+                            print_state = "      Del    ";
+                        },
+                        State::Error => { 
+                            color = Color::LightRed;
+                            print_state = "      Err    ";
+                        },
+                    }
+                }
+            }
+            list_items.push(ListItem::new(Line::from(vec![
+                Span::styled(checkmark, Style::default()),
+                Span::styled(print_state, Style::default().fg(color)),
+                Span::styled(item.clone(), Style::default())
+            ])));
+        }
+
+        List::new(list_items)
+            .highlight_style(Style::new().gray().reversed())
+            .block(
+                Block::default().borders(border!(BOTTOM, LEFT, RIGHT))
+            )
+    }
+
+    fn next(&mut self) {
+        let i = match self.selected.selected() {
+            Some(i) => {
+                if i == self.files.len().saturating_sub(1) {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.selected.select(Some(i));
+    }
+
+    fn previous(&mut self) {
+        let i = match self.selected.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.files.len().saturating_sub(1)
+                } else {
+                    i.saturating_sub(1)
+                }
+            }
+            None => 0,
+        };
+        self.selected.select(Some(i));
+    }
+
+    fn update(&mut self) {
+        let i = match self.selected.selected() {
+            Some(i) => i,
+            None => return 
+        };
+        self.added[i] = !self.added[i];
+        self.list = Self::generateList(self.files.clone(), self.added.clone(), self.states.clone())
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+///// Rendering
+/////////////////////////////////////////////////////////////////////////////////////////////////
+struct App<'a> {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+    checkbox_list:  StatefulCheckBox<'a>,
+}
+impl<'a> App<'_> {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let _ = color_eyre::install();
+        let terminal = ratatui::init();
+        let checkbox_list = StatefulCheckBox::new()?;
+
+        Ok(Self { terminal, checkbox_list })
+    }
+    fn run(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+        let save: bool;
+
+        loop {
+            self.terminal.draw(|frame| { 
+                Self::render(&mut self.checkbox_list, frame)
+            })?;
+            if let Event::Key(key) = event::read()? {
+                match self.button_pressed(key) {
+                    Some(state) => {
+                        save = state;
+                        break
+                    },
+                    None => {},
+                }
+            }
+        }
+        Ok(save)
+    }
+    fn button_pressed(&mut self, key: KeyEvent) -> Option<bool>{
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return Some(false),
+            KeyCode::Up => {
+                self.checkbox_list.previous();
+                return None
+            },
+            KeyCode::Down => {
+                self.checkbox_list.next();
+                return None
+            },
+            KeyCode::Enter => {
+                self.checkbox_list.update();
+                return None
+            },
+            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Some(true)
+            },
+            _ => return None
+        }
+    }
+    fn render(checkbox_list:  &mut StatefulCheckBox, frame: &mut Frame) {
+        let layout = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Min(3),
+            Constraint::Length(3)
+        ]).split(frame.area());
+
+        Self::render_header(frame, layout[0]);
+        Self::render_checkboxes(frame, layout[1], checkbox_list);
+        Self::render_footer(frame, layout[2]);
+    }
+    fn render_header(frame: &mut Frame, area: Rect) {
+        let text = Paragraph::new("Staged   State   File Path")
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .block(
+                Block::default()
+                    .borders(border!(TOP, LEFT, RIGHT))
+            );
+        frame.render_widget(text, area);
+    }
+    fn render_footer(frame: &mut Frame, area: Rect) {
+        let block = Block::bordered()
+            .border_style(Style::default().fg(Color::DarkGray))
+            .padding(Padding::horizontal(1));
+
+        let text = Line::from(vec![
+                Span::styled("↑/↓", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(" Navigate  "),
+                Span::styled("Enter", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(" Toggle  "),
+                Span::styled("Ctrl+x", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(" Apply Changes  "),
+                Span::styled("Esc/q", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(" Quit"),
+            ]);
+
+        let paragraph = Paragraph::new(text).alignment(Alignment::Center);
+        frame.render_widget(paragraph.block(block), area);
+    }
+
+    fn render_checkboxes(frame: &mut Frame, area: Rect, checkbox_list: &mut StatefulCheckBox) {
+        frame.render_stateful_widget(checkbox_list.list.clone(), area, &mut checkbox_list.selected);
+    }
+    fn exit(&mut self, result: Result<bool, Box<dyn std::error::Error>>) -> Result<(), Box<dyn std::error::Error>> {
+        ratatui::restore();
+
+        if result.unwrap_or(false) == true {
+            get_file_changes(&self.checkbox_list)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn run_app() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = App::new()?;
+    let result = app.run();
+    app.exit(result)?;
+    Ok(())
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+///// Git Operations
+/////////////////////////////////////////////////////////////////////////////////////////////////
+fn get_file_changes(checkbox_list:  &StatefulCheckBox) -> Result<(), Box<dyn std::error::Error>> {
+    let top_dir = get_top_git()?;
+
+    for ((old_state, new_state), filename) in checkbox_list.original_states.iter().zip(&checkbox_list.added).zip(&checkbox_list.files) {
+        if *old_state == false && *new_state == true {
+            match stage_file(&filename, &top_dir) {
+                Ok(_) => println!("{} -> {}", filename.red(), filename.green()),
+                Err(e) => println!("Failed to stage {} {filename}: {e}", top_dir.display())
+            }
+        } else if *old_state == true && *new_state == false {
+            match unstage_file(filename.clone(), &top_dir) {
+                Ok(_) => println!("{} -> {}", filename.green(), filename.red()),
+                Err(e) => println!("Failed to unstage {filename}: {e}")
+            }
+        }
+    }
+    Ok(())
 }

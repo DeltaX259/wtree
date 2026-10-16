@@ -1,17 +1,20 @@
-use std::process::Command;
-use crate::utils::dir::get_current_dir;
+use crate::utils::dir::{get_current_dir, get_top_git};
+use crate::utils::git::{FileState, get_git_output};
+
+use crossterm::event::KeyEvent;
 use crossterm::event::{self, Event::{self}, KeyCode, KeyModifiers};
-use color_eyre::Result;
-use regex::Regex;
+use ratatui_crossterm::CrosstermBackend;
 use ansi_to_tui::IntoText;
 use ratatui::{
-    DefaultTerminal,
+    Terminal,
     layout::{Constraint, Rect, Layout},
     Frame,
     style::{Modifier, Color, Style},
     widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
-    text::Span,
+    text::{Span,Text, Line},
 };
+use std::io::Stdout;
+use std::process::Command;
 
 struct StatefulList<'a> {
     list: List<'a>,
@@ -21,12 +24,15 @@ struct StatefulList<'a> {
 impl StatefulList<'_> {
     fn new(items: Vec<String>) -> Self {
         let default_style = Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::White)
-                                .add_modifier(Modifier::BOLD);
+            .fg(Color::Black)
+            .bg(Color::White)
+            .add_modifier(Modifier::BOLD);
         
         let title = Span::styled("Changed files", default_style);
-        let subtitle = Span::styled(" Scroll: Up/Down     View file: Enter     Quit: q/Esc ", default_style);
+        let subtitle = Span::styled(
+            " Scroll: Up/Down     View file: Enter     Quit: q/Esc ",
+            default_style);
+
         Self {
             list: List::new(items.clone())
                 .style(Color::White)
@@ -43,26 +49,15 @@ impl StatefulList<'_> {
     }
     fn next(&mut self) {
         let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.items.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
+            Some(i) => (i + 1).min(self.items.len().saturating_sub(1)),
             None => 0,
         };
         self.state.select(Some(i));
     }
+    
     fn previous(&mut self) {
         let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
+            Some(i) => i.saturating_sub(1),
             None => 0,
         };
         self.state.select(Some(i));
@@ -78,12 +73,9 @@ struct StatefulParagraph<'a> {
     subtitle: String,
     default_style: Style,
 }
-impl StatefulParagraph<'_> {
-    fn new(text: String) -> Self {
-        let title = String::from("");
-        let subtitle = String::from("");
-        let t2 = text.into_text().unwrap();
-        let p = Paragraph::new(t2)
+impl<'a> StatefulParagraph<'a> {
+    fn new(text: Paragraph<'a>) -> Result<Self, Box<dyn std::error::Error>> {
+        let p = text
             .wrap(Wrap { trim: false })
             .block(
                 Block::bordered()
@@ -92,197 +84,328 @@ impl StatefulParagraph<'_> {
                     .borders(Borders::ALL)
             );
         
-        Self {
+        Ok(Self {
             text: p,
             scroll_offset: 0,
             max_scroll: 0,
-            title: title,
-            subtitle: subtitle,
+            title: String::new(),
+            subtitle: String::new(),
             default_style: Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::White)
-                                .add_modifier(Modifier::BOLD)
-        }
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        })
     }
     fn next(&mut self) {
         if self.scroll_offset < self.max_scroll {
             self.scroll_offset = self.scroll_offset.saturating_add(1);
         }
     }
+    
     fn previous(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
     }
+    
     fn update_title(&mut self, title: String) {
         self.title = title;
-        self.text = self.text.clone().block(
-            Block::bordered()
-                .title(Span::styled(self.title.clone(), self.default_style))
-                .title_bottom(Span::styled(self.subtitle.clone(), self.default_style))
-                .borders(Borders::ALL)
-        )
+        self.update();
     }
+    
     fn update_subtitle(&mut self, subtitle: String) {
         self.subtitle = subtitle;
-        self.text = self.text.clone().block(
-            Block::bordered()
-                .title(Span::styled(self.title.clone(), self.default_style))
-                .title_bottom(Span::styled(self.subtitle.clone(), self.default_style))
-                .borders(Borders::ALL)
-        )
+        self.update();
+    }
+
+    fn update(&mut self) {
+        self.text = self.text
+            .clone()
+            .block(
+                Block::bordered()
+                    .title(Span::styled(self.title.clone(), self.default_style))
+                    .title_bottom(Span::styled(self.subtitle.clone(), self.default_style))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::White))
+            );
     }
 }
 
-fn get_diff(file: String) -> Result<String, Box<dyn std::error::Error>> {
-    if file == String::from("") {
-        return Ok(String::from(""));
+////////////////////////////////////////////////////////////////////////////////////////////////
+#[derive(Clone)]
+struct GitDiff<'a> {
+    path: String,
+    content: Paragraph<'a>,
+    status: FileState,
+    staged: bool,
+}
+impl<'a> GitDiff<'a> {
+    fn new(file: &str) -> Result<Self, Box<dyn std::error::Error>> {
+
+        if file.len() < 2 { return Err("Empty git status --porcelain line".into()) }
+        let status = match &file[..2] {
+            "A " | " A" | "??" => FileState::New,
+            "M " | " M" =>  FileState::Modified,
+            "D " | " D" =>  FileState::Deleted,
+            "R " | " R" =>  FileState::Renamed,
+            _ =>  FileState::Error,
+        };
+        let staged = match &file[..1] {
+            " " | "?" => false,
+            "A" | "M" | "D" | "R" => true,
+            _ => false
+        };
+        
+        let mut content = Paragraph::new("");
+        let mut path = file[3..].trim().to_string();
+
+        if path.starts_with('"') && path.ends_with('"') {
+            path = path[1..path.len()-1].to_string();
+        }
+
+        if status == FileState::Renamed {
+            let (old, new) = path.split_once(" -> ").ok_or_else(|| { std::io::Error::new(std::io::ErrorKind::InvalidData, "Input does not contain ' -> '")})?;
+            content = Paragraph::new(Line::from(vec![
+                Span::styled(old.to_owned(), Style::default().fg(Color::Red)),
+                Span::styled(" -> ", Style::default()),
+                Span::styled(new.to_owned(), Style::default().fg(Color::Green))
+            ]));
+            path = new.to_string();
+        }
+        
+        return Ok(Self {
+            path: path,
+            content: content,
+            status: status,
+            staged: staged,
+        })
     }
-    let current_dir = get_current_dir();
-    let output = Command::new("git")
-        .args(["diff", "-U1000000", "--word-diff", &file])
-        .current_dir(current_dir)
-        .output()?;
-    
-    let mut diff_lines = String::from_utf8_lossy(&output.stdout).to_string();
-    diff_lines = skip_lines(&diff_lines, 5);
-    
+    fn get_content(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let current_dir = get_current_dir();
+        let top_dir = get_top_git()?;
 
-    let regex_added = Regex::new(r"\{([+])|([+])\}").expect("Invalid regex");
-    let regex_removed = Regex::new(r"\[([-])|([-])\]").expect("Invalid regex");
+        match self.status {
+            FileState::New => {
+                let file_path = format!("{}/{}", top_dir.display(), &self.path);
 
-    let regex1 = "\x1b[1;30;42m"; //Green
-    let regex2 = "\x1b[0m";
-
-    diff_lines = parse_diff(&diff_lines, regex_added, regex1, regex2);
-
-    let regex1 = "\x1b[1;30;41m"; //Red
-    diff_lines = parse_diff(&diff_lines, regex_removed, regex1, regex2);
-
-    Ok(diff_lines)
-}
-
-fn skip_lines(s: &str, n: usize) -> String {
-    s.lines()
-        .skip(n)
-        .collect::<Vec<&str>>()
-        .join("\n")
-}
-
-fn parse_diff(text: &str, reg: Regex, r1: &str, r2: &str) -> String {
-    let text = reg.replace_all(&text, |caps: &regex::Captures| {
-            match caps.get(2) {
-                Some(_) => r2,
-                None => r1,
+                let output = get_git_output(&vec!["diff", "-U1000000", "--raw", &self.path], &current_dir)?;
+            
+                if !output.status.success() {
+                    let content = String::from_utf8_lossy(&output.stderr).to_string();
+                    self.content = Paragraph::new(content);
+                } else {
+                    let content = std::fs::read_to_string(file_path)?;
+                    self.content = Paragraph::new(Text::styled(content, Style::default().fg(Color::Green)));
+                }
             }
-        }).to_string();
-    text
+            FileState::Modified => {
+                let file_path = format!("{}/{}", top_dir.display(), &self.path);
+ 
+                let args = match self.staged {
+                    true => {
+                        vec!["diff", "-U1000000", "--color=always", "HEAD^", "--", &file_path]
+                    },
+                    false => {
+                        vec!["diff", "-U1000000", "--color=always", "HEAD^", "--", &file_path]
+                    }
+                };
+                
+                let output = Command::new("git")
+                        .args(args)
+                        .output()?;
+                
+                if !output.status.success() {
+                    return Err(format!("git diff failed: {}", String::from_utf8_lossy(&output.stderr)).into());
+                }
+
+                let mut diff = String::from_utf8(output.stdout)?;
+                diff = diff.lines().skip(5).collect::<Vec<&str>>().join("\n");
+                let text: Text<'static> = diff.into_text()?;
+                self.content = Paragraph::new(text);
+            },
+            FileState::Renamed => {},
+            FileState::Deleted => {
+                let head = format!("HEAD:{}", &self.path);
+                let output = get_git_output(&vec!["show", &head], &current_dir)?;
+    
+                if !output.status.success() {
+                    let content = String::from_utf8_lossy(&output.stderr).to_string();
+                    self.content = Paragraph::new(content);
+                } else {
+                    let content = String::from_utf8_lossy(&output.stdout).to_string();
+                    self.content = Paragraph::new(content).style(Style::default().fg(Color::Red));
+                }
+            }
+            _ => {
+                self.content = Paragraph::new("Error");
+            }
+       };
+        Ok(())
+    }
 }
 
-pub fn diff(file: Option<String>) -> Result<(), Box< dyn std::error::Error>> {
-    let files = get_list();
-    let mut stateful_files = StatefulList::new(files);
+pub fn diff(file: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = get_current_dir();
+    let output = get_git_output(&vec!["status", "--porcelain"], &current_dir)?;
+    if !output.status.success() {
+        return Err("'git status --porcelain' failed".into())
+    }
+    let mut files: Vec<GitDiff> = Vec::new();
+    let output = String::from_utf8_lossy(&output.stdout).to_string();
+    for line in output.lines() {
+        let gitdiff = GitDiff::new(line)?;
+        files.push(gitdiff);
+    }
 
-    color_eyre::install()?;
-    ratatui::run(|terminal| {
-        let _ = app(terminal, &mut stateful_files, file);
-    });
-
+    let mut app = App::new(file, files)?;
+    match app.run() {
+        Ok(_) => app.exit(),
+        Err(e) => {
+            app.exit();
+            return Err(e)
+        }
+    }
     Ok(())
 }
-
-fn get_list() -> Vec<String> {
-    let current_dir = get_current_dir();
-    let output = Command::new("git")
-        .args(["diff", "--name-only"])
-        .current_dir(current_dir)
-        .output().unwrap();
-
-    let f = String::from_utf8_lossy(&output.stdout).to_string();
-    let mut files: Vec<String> = Vec::new();
-    for line in f.lines() {
-        files.push(line.to_string());
-    }
-    files
+////////////////////////////////////////////////////////////////////////////////////////////////
+enum ButtonAction {
+    View,
+    Exit, 
+    Nothing,
 }
 
-fn app(terminal: &mut DefaultTerminal, mut file_list: &mut StatefulList, file: Option<String>) -> Result<(), Box<dyn std::error::Error>>{
-    let f = match file {
-        Some(ref f) => f,
-        None => &String::from(""),
-    };
-    
-    let mut content = get_diff(f.clone().to_string()).unwrap();
-    let mut p1 = StatefulParagraph::new(content);
-    if f != "" {
-        p1.update_title(f.to_string());
-        p1.update_subtitle(" Scroll: Up/Down     Quit: q/Esc ".to_string());
-    }
+struct AppData<'a> {
+    file: Option<String>,
+    paragraph: StatefulParagraph<'a>,
+    file_list: StatefulList<'a>,
+    files: Vec<GitDiff<'a>>,
+}
+struct App<'a> {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+    data: AppData<'a>,
+}
+impl<'a> App<'_> {
+    fn new(file: Option<String>, files: Vec<GitDiff<'a>>) -> Result<App<'a>, Box<dyn std::error::Error>> {
+        color_eyre::install()?;
+        let terminal = ratatui::init();
 
-    loop {
-        let area = terminal.size()?;
-        p1.max_scroll = std::cmp::max(area.height, (p1.text.line_count(area.width / 2) as u16) + 3);
-        p1.max_scroll -= area.height;
-            
-        terminal.draw(|frame| {
-            render(frame, &mut file_list, &mut p1, &file);
-        })?;
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                KeyCode::Down => {
-                    if key.modifiers == KeyModifiers::CONTROL || !file.is_none() {
-                        p1.next()
-                    } else {
-                        file_list.next()
-                    }
-                },
-                KeyCode::Up => {
-                    if key.modifiers == KeyModifiers::CONTROL || !file.is_none() {
-                        p1.previous();
-                    } else {
-                        file_list.previous()
-                    }
-                },
-                KeyCode::Enter => {
-                    if file.is_none() {
-                        if let Some(selected_idx) = file_list.state.selected() {
-                            let selected_item = file_list.items[selected_idx].clone();
-                            content = get_diff(selected_item.clone()).unwrap();
-                            p1 = StatefulParagraph::new(content);
-                            p1.update_title(selected_item);
-                            p1.update_subtitle(" Scroll: Ctrl+Up/Down ".to_string());
-                        }
-                    }
+        let paragraph = if let Some(f) = &file {
+            let top_dir = get_top_git()?;
+            let file_path = format!("{}/{}", top_dir.display(), f.trim());
+
+            let current_dir = get_current_dir();
+            let output = get_git_output(&vec!["status", "--porcelain", &file_path], &current_dir)?;
+            if !output.status.success() {
+                return Err("'git status --porcelain' failed".into())
+            }
+            let output = String::from_utf8_lossy(&output.stdout).to_string();
+            let mut diff = GitDiff::new(&output)?;
+            diff.get_content()?;
+            StatefulParagraph::new(diff.content)?
+        } else {
+            StatefulParagraph::new(Paragraph::new(String::new()))?
+        };
+        
+        let file_list = StatefulList::new(
+            files.clone()
+                 .into_iter()
+                 .map(|file|file.path).collect());
+        Ok(App {
+            terminal: terminal,
+            data: AppData { file: file, paragraph: paragraph, file_list: file_list, files: files }
+        })
+    }
+    fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        loop {
+            let area = self.terminal.size()?;
+            self.data.paragraph.max_scroll = std::cmp::max(area.height, (self.data.paragraph.text.line_count(area.width / 2) as u16) + 3);
+            self.data.paragraph.max_scroll -= area.height;
+
+            self.terminal.draw(|frame| {
+                Self::render(frame, &mut self.data);
+            })?;
+
+            if let Event::Key(key) = event::read()? {
+                match Self::button_pressed(&mut self.data, key)? {
+                    ButtonAction::View => {},
+                    ButtonAction::Nothing => {},
+                    ButtonAction::Exit => { 
+                        return Ok(())
+                   },
                 }
-                KeyCode::Char('s') => p1.next(),
-                KeyCode::Char('w') => p1.previous(),
-                _ => {},
             }
         }
     }
-}
+    fn button_pressed(app: &mut AppData, key: KeyEvent) -> Result<ButtonAction, Box<dyn std::error::Error>> {
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => Ok(ButtonAction::Exit),
+            KeyCode::Down | KeyCode::Char('s') => {
+                if key.modifiers == KeyModifiers::CONTROL || !app.file.is_none() {
+                    app.paragraph.next();
+                    return Ok(ButtonAction::Nothing)
+                } else {
+                    app.file_list.next();
+                    return Ok(ButtonAction::Nothing)
+                }
+            },
+            KeyCode::Up | KeyCode::Char('w') => {
+                if key.modifiers == KeyModifiers::CONTROL || !app.file.is_none() {
+                    app.paragraph.previous();
+                    return Ok(ButtonAction::Nothing)
 
-fn render(frame: &mut Frame, file_list: &mut StatefulList, p1: &mut StatefulParagraph, file: &Option<String>) {
-    let chunks = Layout::default()
-        .direction(ratatui::layout::Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Min(0)
-        ])
-        .split(frame.area());
-    
-    if file.is_none() {
-        render_list(frame, file_list, chunks[0]);
-        render_diff(frame, p1, chunks[1]);
-    } else {
-        render_diff(frame, p1, chunks[0]);
+                } else {
+                    app.file_list.previous();
+                    return Ok(ButtonAction::Nothing)
+                }
+            },
+            KeyCode::Enter => {
+                if app.file.is_none() {
+                    if let Some(selected_idx) = app.file_list.state.selected() {
+                        let selected_item = app.file_list.items[selected_idx].clone();
+                        app.files[selected_idx].get_content()?;
+                        app.paragraph = StatefulParagraph::new(app.files[selected_idx].content.clone())?;
+                        app.paragraph.update_title(selected_item);
+                        app.paragraph.update_subtitle(" Scroll: Ctrl+Up/Down ".to_string());
+                        return Ok(ButtonAction::View)
+                    }
+                }
+                return Ok(ButtonAction::Nothing)
+            }
+            _ => return Ok(ButtonAction::Nothing),
+        }
     }
-}
+    fn render(frame: &mut Frame, app: &mut AppData) {
 
-fn render_list(frame: &mut Frame, file_list: &mut StatefulList, chunk: Rect) {      
-    frame.render_stateful_widget(file_list.list.clone(), chunk, &mut file_list.state);
-}
+        
+        let chunk_size: u16 ;
+        if app.file.is_none() {
+            chunk_size = 50;
+        } else {
+            chunk_size = 100;
+        }
+        let chunks = Layout::default()
+            .direction(ratatui::layout::Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(chunk_size),
+                Constraint::Min(0)
+            ])
+            .split(frame.area());
 
-fn render_diff(frame: &mut Frame, p1: &mut StatefulParagraph, chunk: Rect) {
-    p1.text = p1.text.clone().scroll((p1.scroll_offset, 0));
-    frame.render_widget(p1.text.clone(), chunk);
+        if app.file.is_none() {
+            Self::render_list(frame, app, chunks[0]);
+            Self::render_diff(frame, app, chunks[1]);
+        } else {
+            Self::render_diff(frame, app, chunks[0]);
+        }
+    }
+
+    fn render_list(frame: &mut Frame, app: &mut AppData, chunk: Rect) {
+        frame.render_stateful_widget(app.file_list.list.clone(), chunk, &mut app.file_list.state);
+    }
+    
+    fn render_diff(frame: &mut Frame, app: &mut AppData, chunk: Rect) {
+        app.paragraph.text = app.paragraph.text.clone().scroll((app.paragraph.scroll_offset, 0));
+        frame.render_widget(app.paragraph.text.clone(), chunk);
+    }
+    fn exit(&mut self) {
+        ratatui::restore();
+    }
 }

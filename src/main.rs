@@ -43,14 +43,8 @@ enum Commands {
         branch: String,
     },
 
-    #[command(about="Download remote branch and add to local worktree")]
-    Add {
-        #[arg(help="Branch to download")]
-        branch: String,
-    },
-
     #[command(about="List local/downloaded branchs")]
-    List{
+    List {
         #[arg(short = 'a', long = "all")]
         #[arg(help="List all available worktrees")]
         all: bool,
@@ -59,9 +53,11 @@ enum Commands {
     #[command(about="Returns top worktree directory")]
     Top,
 
-    #[command(about="Returns current branch")]
-    #[command(alias = "branch")]
-    Worktree,
+    #[command(about="Returns current branch, or creates new branch if name provided")]
+    Branch {
+        #[arg(help="Branch to add/download")]
+        branch: Option<String>,
+    },
 
     #[command(about="Get commit logs")]
     #[command(visible_alias = "logs", visible_alias = "history")]
@@ -91,6 +87,9 @@ enum Commands {
         #[arg(short = 'f', long = "force")]
         force: bool,
     },
+
+    #[command(about="pull remote changes/updates")]
+    Pull,
     
     #[command(visible_alias = "restore")]
     #[command(about="Move files from staged to unstaged")]
@@ -101,6 +100,7 @@ enum Commands {
     },
 
     #[command(about="Stage files to commit")]
+    #[command(visible_alias = "add")]
     Stage {
         #[arg(help="Files to stage")]
         files: Option<Vec<String>>,
@@ -108,8 +108,11 @@ enum Commands {
         #[arg(short = 'a', long = "all")]
         all: bool,
     },
-    
-    #[command(about="Fille differences")]
+
+    #[command(about="Commit staged changes")]
+    Commit,
+
+    #[command(about="File differences")]
     Diff {
         file: Option<String>,
     },
@@ -118,108 +121,59 @@ enum Commands {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
+    macro_rules! run {
+        ($expr:expr) => {
+            if let Err(e) = $expr {
+                eprintln!("[Error]: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+    }
     match cli.command {
-        Commands::Clone { repo, branch } => {
-            if let Err(e) = git::clone::clone_repo(&repo, branch) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Fetch => {
-            if let Err(e) = git::clone::fetch_repo() {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Delete { branch } => {
-            if let Err(e) = git::branch::delete_branch(&branch) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Purge { branch } => {
-            if let Err(e) = git::branch::purge_branch(&branch) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Add { branch } => {
-            if let Err(e) = git::branch::add_branch(&branch) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::List { all }=> {
-            if let Err(e) = git::branch::branch_list(all) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Top => {
-            if let Err(e) = worktree_top() {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Worktree => {
-            match get_current_worktree() {
-                Ok(worktree) => println!("Current worktree: {}", worktree.trim()),
-                Err(e) => {
-                    eprintln!("[Error]: {e}");
-                    return ExitCode::FAILURE;
-                },
-            }
-        }
-        Commands::Log { length } => {
-            if let Err(e) = git::status::get_logs(length) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Base => {
-            if let Err(e) = get_base() {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Status => {
-            if let Err(e) = git::status::get_git_status() {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE
-            }
-        }
-        Commands::Unstage { file, all } => {
-            if let Err(e) = git::staging::unstage(file, all) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
+        Commands::Clone { repo, branch } => run!(git::clone::clone_repo(&repo, branch)),
+        Commands::Fetch => run!(git::pull::fetch_repo()),
+        Commands::Delete { branch } => run!(git::branch::delete_branch(&branch)),
+        
+        Commands::Purge { branch } => run!(git::branch::purge_branch(&branch)),
+        Commands::List { all }=> run!(git::branch::branch_list(all)),
+        Commands::Top => run!(worktree_top()),
+        
+        Commands::Log { length } => run!(git::status::get_logs(length)),
+        Commands::Base => run!(get_base()),
+        Commands::Status => run!(git::status::get_git_status()),
+        
+        Commands::Unstage { file, all } => run!(git::staging::unstage(file, all)),
         Commands::Stage { files, all } => {
-            if let Err(e) = git::staging::stage_files(files, all) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE
+            if files.is_none() && !all {
+                // run!(git::staging::stage_selector())
+                run!(git::staging::run_app())
+            } else {
+                run!(git::staging::stage_files(files, all))
             }
-        }
-        Commands::Amend { all, push } => {
-            if let Err(e) = git::commit::amend(all, push) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
+        },
+        Commands::Amend { all, push } => run!(git::commit::amend(all, push)),
+
+        Commands::Commit => run!(git::commit::make_commit()),
+        Commands::Push { force } => run!(git::commit::git_push(force)),
+        Commands::Diff { file } => run!(git::diff::diff(file)),
+
+        
+        Commands::Pull => run!(git::pull::pull()),
+        Commands::Branch { branch } => {
+            match branch {
+                Some(branch) => run!(git::branch::add_branch(&branch)),
+                None => {
+                    match get_current_worktree() {
+                        Ok(worktree) => println!("Current worktree: {}", worktree.trim()),
+                        Err(e) => {
+                            eprintln!("[Error]: {e}");
+                            return ExitCode::FAILURE;
+                        },
+                    }
+                }
             }
-        }
-        Commands::Push { force } => {
-            if let Err(e) = git::commit::git_push(force) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Diff { file } => {
-            if let Err(e) = git::diff::diff(file) {
-                eprintln!("[Error]: {e}");
-                return ExitCode::FAILURE;
-            }
+ 
         }
     }
     ExitCode::SUCCESS
 }
-
-
