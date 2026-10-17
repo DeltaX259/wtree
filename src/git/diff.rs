@@ -49,7 +49,13 @@ impl StatefulList<'_> {
     }
     fn next(&mut self) {
         let i = match self.state.selected() {
-            Some(i) => (i + 1).min(self.items.len().saturating_sub(1)),
+            Some(i) => {
+                if i == self.items.len().saturating_sub(1) {
+                    0
+                } else {
+                    i + 1
+                }
+            },
             None => 0,
         };
         self.state.select(Some(i));
@@ -57,7 +63,13 @@ impl StatefulList<'_> {
     
     fn previous(&mut self) {
         let i = match self.state.selected() {
-            Some(i) => i.saturating_sub(1),
+            Some(i) => {
+                if i == 0 {
+                    self.items.len().saturating_sub(1)
+                } else {
+                    i.saturating_sub(1)
+                }
+            },
             None => 0,
         };
         self.state.select(Some(i));
