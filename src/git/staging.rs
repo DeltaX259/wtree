@@ -405,13 +405,13 @@ impl<'a> App<'_> {
             .padding(Padding::horizontal(1));
 
         let text = Line::from(vec![
-                Span::styled("↑/↓", Style::default().fg(Color::Cyan).bold()),
+                Span::styled("↑/↓", Style::default().fg(Color::Blue).bold()),
                 Span::raw(" Navigate  "),
-                Span::styled("Enter", Style::default().fg(Color::Cyan).bold()),
+                Span::styled("Enter", Style::default().fg(Color::Blue).bold()),
                 Span::raw(" Toggle  "),
-                Span::styled("Ctrl+x", Style::default().fg(Color::Cyan).bold()),
+                Span::styled("Ctrl+x", Style::default().fg(Color::Blue).bold()),
                 Span::raw(" Apply Changes  "),
-                Span::styled("Esc/q", Style::default().fg(Color::Cyan).bold()),
+                Span::styled("Esc/q", Style::default().fg(Color::Blue).bold()),
                 Span::raw(" Quit"),
             ]);
 
