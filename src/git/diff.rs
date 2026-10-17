@@ -7,10 +7,10 @@ use ratatui_crossterm::CrosstermBackend;
 use ansi_to_tui::IntoText;
 use ratatui::{
     Terminal,
-    layout::{Constraint, Rect, Layout},
+    layout::{Alignment, Constraint, Rect, Layout},
     Frame,
     style::{Modifier, Color, Style},
-    widgets::{Block, Borders, List, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListState, Paragraph, Padding, Wrap},
     text::{Span,Text, Line},
 };
 use std::io::Stdout;
@@ -27,11 +27,8 @@ impl StatefulList<'_> {
             .fg(Color::Black)
             .bg(Color::White)
             .add_modifier(Modifier::BOLD);
-        
+
         let title = Span::styled("Changed files", default_style);
-        let subtitle = Span::styled(
-            " Scroll: Up/Down     View file: Enter     Quit: q/Esc ",
-            default_style);
 
         Self {
             list: List::new(items.clone())
@@ -40,11 +37,9 @@ impl StatefulList<'_> {
                 .block(
                     Block::bordered()
                         .title(title.clone())
-                        .title_bottom(subtitle.clone())
                         .borders(Borders::ALL)),
             state: ListState::default().with_selected(Some(0)),
             items: items,
-
         }
     }
     fn next(&mut self) {
@@ -120,11 +115,6 @@ impl<'a> StatefulParagraph<'a> {
     
     fn update_title(&mut self, title: String) {
         self.title = title;
-        self.update();
-    }
-    
-    fn update_subtitle(&mut self, subtitle: String) {
-        self.subtitle = subtitle;
         self.update();
     }
 
@@ -375,7 +365,6 @@ impl<'a> App<'_> {
                         app.files[selected_idx].get_content()?;
                         app.paragraph = StatefulParagraph::new(app.files[selected_idx].content.clone())?;
                         app.paragraph.update_title(selected_item);
-                        app.paragraph.update_subtitle(" Scroll: Ctrl+Up/Down ".to_string());
                         return Ok(ButtonAction::View)
                     }
                 }
@@ -385,21 +374,24 @@ impl<'a> App<'_> {
         }
     }
     fn render(frame: &mut Frame, app: &mut AppData) {
-
-        
         let chunk_size: u16 ;
         if app.file.is_none() {
             chunk_size = 50;
         } else {
             chunk_size = 100;
         }
+        let layout = Layout::vertical([
+            Constraint::Min(3),
+            Constraint::Length(3)
+        ]).split(frame.area());
+        
         let chunks = Layout::default()
             .direction(ratatui::layout::Direction::Horizontal)
             .constraints([
                 Constraint::Percentage(chunk_size),
                 Constraint::Min(0)
             ])
-            .split(frame.area());
+            .split(layout[0]);
 
         if app.file.is_none() {
             Self::render_list(frame, app, chunks[0]);
@@ -407,6 +399,7 @@ impl<'a> App<'_> {
         } else {
             Self::render_diff(frame, app, chunks[0]);
         }
+        Self::render_footer(frame, layout[1]);
     }
 
     fn render_list(frame: &mut Frame, app: &mut AppData, chunk: Rect) {
@@ -416,6 +409,26 @@ impl<'a> App<'_> {
     fn render_diff(frame: &mut Frame, app: &mut AppData, chunk: Rect) {
         app.paragraph.text = app.paragraph.text.clone().scroll((app.paragraph.scroll_offset, 0));
         frame.render_widget(app.paragraph.text.clone(), chunk);
+    }
+
+    fn render_footer(frame: &mut Frame, area: Rect) {
+        let block = Block::bordered()
+            .border_style(Style::default().fg(Color::DarkGray))
+            .padding(Padding::horizontal(1));
+
+        let text = Line::from(vec![
+                Span::styled("↑/↓", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(": Navigate Menu "),
+                Span::styled("Enter", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(": View file  "),
+                Span::styled("Ctrl+↑/↓", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(": Navigate file  "),
+                Span::styled("Esc/q", Style::default().fg(Color::Cyan).bold()),
+                Span::raw(": Quit"),
+            ]);
+
+        let paragraph = Paragraph::new(text).alignment(Alignment::Center);
+        frame.render_widget(paragraph.block(block), area);
     }
     fn exit(&mut self) {
         ratatui::restore();
